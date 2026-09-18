@@ -42,10 +42,11 @@ scripts rather than a separate tool consumed by them.
   issue, which is worse under systemd than under a plain SSH session).
 - New docs: `docs/video-protocol-notes.md`, `docs/ipc-protocol.md`,
   `docs/video-live-verification.md`.
-- **Live-verified end-to-end** (2026-09-18) against the real display:
-  full bootstrap → TCP/TLS handshake → video/touch channels →
-  `examples/hello_world.py` sending a real frame over the IPC socket, no
-  errors. Two real bugs found and fixed in the process:
+- **Live-verified end-to-end, visually confirmed** (2026-09-18) against
+  the real display: full bootstrap → TCP/TLS handshake → video/touch
+  channels → `examples/hello_world.py` sending a real frame over the IPC
+  socket — "Hello, aa-hmi!" seen rendered on the physical panel. Two real
+  bugs found and fixed in the process:
   - The RFCOMM/Bluetooth link has to stay **open** through the TCP
     connect (not just have sent the right messages) for the display's
     video port to accept a connection — `WifiStartResponse`/`WifiConnectStatus`

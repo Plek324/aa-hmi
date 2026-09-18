@@ -22,10 +22,11 @@ real TF811BT motorcycle display (2026-09-18) — see
 [Tested with](#tested-with) and
 [`docs/protocol-notes.md`](docs/protocol-notes.md#the-full-confirmed-sequence).
 
-**Daemon mode (`aa-hmi serve`): confirmed working end-to-end** against the
-same real display (2026-09-18) — full bootstrap → TCP/TLS handshake →
-video + touch channels opened → `examples/hello_world.py` connected over
-the local IPC socket and sent a real frame, no errors on either side. One
+**Daemon mode (`aa-hmi serve`): confirmed working end-to-end, visually** —
+against the same real display (2026-09-18): full bootstrap → TCP/TLS
+handshake → video + touch channels opened → `examples/hello_world.py`
+connected over the local IPC socket and sent a real frame — and
+"Hello, aa-hmi!" was actually seen rendered on the physical panel. One
 real integration bug was found and fixed along the way: the RFCOMM/Bluetooth
 link must stay open through the TCP connect, not just have been used (see
 [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)). Touch
