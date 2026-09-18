@@ -194,6 +194,12 @@ too, but haven't been verified:
   reuse the same white-label internals, so this project's findings may
   apply more broadly than just to units sold as "Podofo."
 
+  <img src="docs/images/head-unit-connection-screen.jpg" alt="The head unit's own on-screen Bluetooth pairing instructions, showing its equipment name TF811BT_1c64201a" width="500">
+
+  The unit's own on-screen pairing instructions — note the equipment
+  name (`TF811BT_1c64201a`), matching the identifier this whole project
+  is built around.
+
 If you try this against different hardware, please open an issue/PR
 either way (works identically, or behaves differently) — see
 [`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md) for
