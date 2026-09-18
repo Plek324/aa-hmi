@@ -9,9 +9,14 @@ anyone with different head-unit hardware to test against.
 ```bash
 git clone https://github.com/Plek324/aa-hmi.git
 cd aa-hmi
-pip install -e .[dev]
-pytest
+python3 -m venv .venv
+.venv/bin/pip install -e .[dev]
+.venv/bin/pytest
 ```
+
+(Plain `pip install -e .[dev]` outside a venv will likely fail with
+`error: externally-managed-environment` on current Raspberry Pi
+OS/Debian — see the README's Install section.)
 
 The test suite needs no real Bluetooth/WiFi hardware — it covers the
 protocol codec, the credential cache, the retry helper, and the RFCOMM

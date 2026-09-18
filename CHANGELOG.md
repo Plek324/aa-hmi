@@ -33,3 +33,11 @@ Initial release.
   resolves the real user's home via `$SUDO_USER` in that case, and
   `save()` chowns the cache file/directory back to `$SUDO_UID:$SUDO_GID`
   so it stays readable/writable by that user's later non-sudo runs too.
+- Fixed the README's install instructions, which didn't actually work as
+  written (found via a real user trying them): plain `pip install .`
+  fails with `externally-managed-environment` on current Raspberry Pi
+  OS/Debian (PEP 668), and the documented "just run from source" command
+  (`python -m aa_hmi run`) failed with `No module named aa_hmi` since the
+  package lives under `src/` and wasn't on `PYTHONPATH`. Now documents a
+  `pipx`/venv install and `PYTHONPATH=src python3 -m aa_hmi run`, both
+  verified working on a real Raspberry Pi from a fresh clone.

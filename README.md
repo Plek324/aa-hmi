@@ -56,14 +56,35 @@ the re-verification procedure.
 ```bash
 git clone https://github.com/Plek324/aa-hmi.git
 cd aa-hmi
-pip install .
-# or, to hack on it: pip install -e .[dev]
 ```
 
-Or just run it from source without installing:
+**Plain `pip install .` will likely fail** on current Raspberry Pi
+OS/Debian with `error: externally-managed-environment` (PEP 668 — the
+system Python refuses `pip install` outside a virtual environment,
+confirmed on Raspberry Pi OS/Debian Trixie). Pick one:
 
 ```bash
-python -m aa_hmi run
+# Recommended for regular use: pipx (an isolated venv per app, puts
+# `aa-hmi` on your PATH)
+sudo apt install pipx   # if you don't already have it
+pipx install .
+
+# Or a plain venv, if you'd rather not install pipx
+python3 -m venv .venv
+.venv/bin/pip install .
+.venv/bin/aa-hmi run
+
+# To hack on it (editable install):
+pipx install -e .   # or: .venv/bin/pip install -e .[dev]
+```
+
+Or run it straight from a clone without installing anything — note the
+package lives under `src/`, so it needs to be on `PYTHONPATH` explicitly
+(a bare `python -m aa_hmi run` from the repo root will fail with `No
+module named aa_hmi`):
+
+```bash
+PYTHONPATH=src python3 -m aa_hmi run
 ```
 
 ## Usage
