@@ -194,11 +194,12 @@ too, but haven't been verified:
   reuse the same white-label internals, so this project's findings may
   apply more broadly than just to units sold as "Podofo."
 
-  <img src="docs/images/head-unit-connection-screen.jpg" alt="The head unit's own on-screen Bluetooth pairing instructions, showing its equipment name TF811BT_1c64201a" width="500">
+  <img src="docs/images/hello-podofo.jpg" alt="The Podofo display mounted and showing a custom 'Hello World' message rendered on it" width="500">
 
-  The unit's own on-screen pairing instructions — note the equipment
-  name (`TF811BT_1c64201a`), matching the identifier this whole project
-  is built around.
+  The actual unit, showing custom video content ("Hello World") pushed
+  to it by the sibling `aa_pi2display` project — the original proof that
+  this whole approach works, and the milestone this tool's own
+  WiFi-bootstrap piece was later extracted from.
 
 If you try this against different hardware, please open an issue/PR
 either way (works identically, or behaves differently) — see
