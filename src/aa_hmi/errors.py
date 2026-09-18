@@ -46,6 +46,24 @@ class BluetoothCtlError(AaHmiError):
     """A bluetoothctl invocation failed or timed out."""
 
 
+class VideoSessionError(AaHmiError):
+    """The TCP/TLS video session (video_session.py) failed at some stage
+    -- connect, handshake, channel open, or mid-session send/receive."""
+
+
+class TlsHandshakeError(VideoSessionError):
+    """The TLS 1.2 handshake with the display failed or never completed."""
+
+
+class EncoderError(AaHmiError):
+    """ffmpeg failed to encode a frame (encoder.py), or wasn't found."""
+
+
+class IpcProtocolError(AaHmiError):
+    """Malformed or out-of-sequence message on the local aa-hmi client
+    <-> daemon socket (ipc/protocol.py, ipc/server.py, ipc/client.py)."""
+
+
 # --- actionable hints for known-flaky conditions (real hardware quirks) ---
 
 HINT_SINGLE_CONNECTION_SLOT = (
@@ -81,6 +99,18 @@ HINT_NMCLI_NOT_AUTHORIZED = (
     "'sudo $(command -v aa-hmi) run' (plain 'sudo aa-hmi' won't find the "
     "command if you installed via pipx, since ~/.local/bin isn't on "
     "sudo's PATH)."
+)
+
+HINT_VIDEO_SESSION_FLAKY = (
+    "the TCP/TLS video session to the display keeps dropping. This can "
+    "happen if the display power-cycled, moved out of WiFi range, or "
+    "something else grabbed its single Bluetooth connection slot (see "
+    "HINT_SINGLE_CONNECTION_SLOT above -- the daemon re-triggers the full "
+    "Bluetooth bootstrap on every reconnect, which needs the same single "
+    "BT connection slot as the initial one). If this keeps recurring, "
+    "check docs/video-protocol-notes.md's session-persistence notes -- "
+    "whether one Bluetooth trigger can hold a session open indefinitely "
+    "is still an open question, being tracked via --persistent-session."
 )
 
 # errno values seen in practice against flaky classic-BT head units

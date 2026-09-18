@@ -68,6 +68,24 @@ WIFI_INFO_REQUEST_PAYLOAD: bytes = b""  # confirmed empty -- real captured frame
 # WifiVersionResponse reply after all.
 WIFI_VERSION_REQUEST_PAYLOAD: bytes | None = None
 
+# Confirmed real bytes from the same captured aa-proxy-rs probe session
+# (tests/fixtures/ground_truth_probe_session.txt), sent immediately after
+# WifiInfoResponse in every real probe run observed. `aa-hmi run`'s own
+# scope never needed these (see bootstrap.py's module docstring), but
+# aa-hmi serve (daemon.py) does: discovered live that without sending
+# these, the display's TCP video-session port (29880) refuses connections
+# even after WiFi is successfully joined -- these two messages appear to
+# be what actually arms the video listener, not just receiving
+# WifiInfoResponse. See bootstrap.confirm_wifi_connected() and
+# docs/video-protocol-notes.md.
+#   WifiStartResponse payload 0x1800 decodes as field 3 (varint) = 0.
+#   WifiConnectStatus payload 0x0800 decodes as field 1 (varint) = 0.
+# Neither field's real meaning is confirmed beyond "these exact bytes are
+# what a real working probe sends" -- ported as opaque confirmed bytes,
+# not re-derived.
+WIFI_START_RESPONSE_PAYLOAD = bytes.fromhex("1800")
+WIFI_CONNECT_STATUS_PAYLOAD = bytes.fromhex("0800")
+
 
 class SecurityMode(IntEnum):
     """Values per the public .proto. NEVER used to validate/reject an

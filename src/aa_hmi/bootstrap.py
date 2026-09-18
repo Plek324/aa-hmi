@@ -79,6 +79,27 @@ def try_get_wifi_info(sock: socket.socket, *, read_timeout: float = 2.0) -> Wifi
         return None
 
 
+def confirm_wifi_connected(sock: socket.socket) -> None:
+    """Send WifiStartResponse + WifiConnectStatus over an already-open
+    RFCOMM socket, immediately after a successful WifiInfoResponse.
+
+    Deliberately NOT called by `try_get_wifi_info`/`get_wifi_info`
+    themselves, or by `aa-hmi run` -- this project's own credential-only
+    scope never needed it (see this module's docstring). But `aa-hmi
+    serve` (daemon.py) discovered live that skipping these two messages
+    means the display's TCP video port (29880) refuses connections even
+    right after successfully joining its WiFi network -- these appear to
+    be what actually arms the video listener. Callers that need the video
+    session (daemon.py) must call this before closing the RFCOMM socket;
+    callers that only want credentials (cli.py's `run`) should not."""
+    for msg_id, payload in (
+        (MessageId.WIFI_START_RESPONSE, messages.WIFI_START_RESPONSE_PAYLOAD),
+        (MessageId.WIFI_CONNECT_STATUS, messages.WIFI_CONNECT_STATUS_PAYLOAD),
+    ):
+        sock.sendall(protocol.make_rfcomm_frame(msg_id, payload))
+    log("  sent WifiStartResponse + WifiConnectStatus (arms the display's TCP video listener)")
+
+
 def get_wifi_info(sock: socket.socket, *, read_timeout: float = 5.0) -> WifiInfo:
     """Like try_get_wifi_info, but for the case where the channel is
     already known-good (cached) -- raises HandshakeError with a real

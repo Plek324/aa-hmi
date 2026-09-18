@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""aa-hmi -- scan for a Bluetooth AA-Wireless head unit, pair with it, pull
-its WiFi credentials over the RFCOMM bootstrap handshake, join that WiFi
-network, and cache the device so next time is instant.
+"""aa-hmi -- the generic display-server layer for an AA-Wireless-style
+Bluetooth head unit: scans, pairs, pulls WiFi credentials, joins that
+WiFi network, holds the TCP/TLS video session with the display, and
+relays frames/touch between it and any separate content-producing
+program over a small local socket protocol.
 
-Scope: Bluetooth scan -> pair -> WiFi-credential bootstrap -> WiFi connect
--> credential caching. This is NOT an Android Auto video client -- see
-README.md. The sibling project aa_pi2display consumes credentials/a live
-connection obtained this way to stream video over the resulting WiFi link.
+Two ways to use it:
+- `aa-hmi run`: just the Bluetooth+WiFi bootstrap (credentials/connect
+  only) -- a building block, useful on its own.
+- `aa-hmi serve`: the full daemon -- bootstrap, then hold the display
+  session open and bridge it to a local socket other programs connect to.
+  See docs/ipc-protocol.md and examples/ for the client side of that.
 
 Usage:
     aa-hmi run                         # interactive: scan, pick, pair, connect
     aa-hmi run --rescan                # force a fresh scan even if cached
     aa-hmi run --device AA:BB:CC:DD:EE:FF --non-interactive
     aa-hmi run --no-wifi-connect --json   # just print credentials
+    aa-hmi serve                       # bootstrap + hold the display session + serve IPC
     aa-hmi list
     aa-hmi forget "TF811BT_xxxxxxxx"
 """
@@ -20,21 +25,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import socket
 import sys
 from pathlib import Path
 
-from . import cache, coexistence, wifi
-from .bootstrap import get_wifi_info, try_get_wifi_info
-from .discovery import BluetoothCtl, BtDevice
+from . import cache, coexistence, orchestrate, wifi
+from .discovery import BluetoothCtl
 from .errors import (
-    AaHmiError, GroundTruthNotConfirmedError, HINT_NMCLI_NOT_AUTHORIZED,
-    NmcliError, NoChannelFoundError, NoDeviceSelectedError,
+    AaHmiError, GroundTruthNotConfirmedError, HINT_NMCLI_NOT_AUTHORIZED, NmcliError,
 )
-from .log import log
-from .messages import WifiInfo
-from .retry import RetryExhaustedError, is_retryable_oserror, retry_with_backoff
-from .rfcomm import connect_rfcomm, find_channel
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,20 +41,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command")
 
     run = sub.add_parser("run", help="scan/pair/bootstrap/connect (default)")
-    run.add_argument("--rescan", action="store_true", help="force a fresh BT scan + picker even if a device is cached")
-    run.add_argument("--device", metavar="MAC", help="target a specific device (must be cached, or combine with --channel)")
-    run.add_argument("--channel", type=int, metavar="N", help="force an RFCOMM channel, skip discovery")
-    run.add_argument("--non-interactive", action="store_true", help="never prompt; fail if no usable cached device")
+    _add_bootstrap_args(run)
     run.add_argument("--no-wifi-connect", action="store_true", help="stop after the handshake; print/return credentials only")
     run.add_argument("--json", action="store_true", help="machine-readable result on stdout")
-    run.add_argument("--radio-coexistence-workaround", action="store_true",
-                      help="disconnect WiFi before the Bluetooth step, for combo-chip hardware that can't use both radios at once (e.g. Raspberry Pi's onboard BCM4345C0)")
-    run.add_argument("--wifi-iface", metavar="IFACE", help="WiFi interface to use (default: autodetect)")
-    run.add_argument("--bt-timeout", type=float, default=90.0, metavar="SECONDS",
-                      help="total time budget for Bluetooth-stage retries (default: 90)")
-    run.add_argument("--scan-duration", type=float, default=10.0, metavar="SECONDS", help="BT scan duration (default: 10)")
-    run.add_argument("--config-dir", metavar="PATH", help="override the cache directory (default: $XDG_CONFIG_HOME/aa-hmi)")
     run.add_argument("-v", "--verbose", action="store_true")
+
+    serve = sub.add_parser("serve", help="run the full display-server daemon")
+    _add_bootstrap_args(serve)
+    serve.set_defaults(non_interactive=True)  # an unattended daemon must never block on input()
+    serve.add_argument("--socket-path", metavar="PATH", help="IPC socket location (default: $XDG_RUNTIME_DIR/aa-hmi/video.sock)")
+    serve.add_argument("--display-ip", default="192.168.10.1", help="display's IP on its own WiFi AP (default: 192.168.10.1)")
+    serve.add_argument("--cert", metavar="PATH", help="TLS cert path (default: auto-generated under --config-dir)")
+    serve.add_argument("--key", metavar="PATH", help="TLS key path (default: auto-generated under --config-dir)")
+    serve.add_argument("--persistent-session", action="store_true",
+                        help="EXPERIMENTAL, unverified (see docs/video-protocol-notes.md): assume the TCP/TLS "
+                             "session survives indefinitely without re-arming Bluetooth; still re-arms on any "
+                             "actual drop, but logs/counts drops for soak-test analysis instead of treating "
+                             "re-arming as simply routine")
+    serve.add_argument("--reconnect-max-attempts", type=int, default=None,
+                        help="give up after this many consecutive reconnect failures (default: retry forever)")
+    serve.add_argument("-v", "--verbose", action="store_true")
 
     lst = sub.add_parser("list", help="show cached devices")
     lst.add_argument("--config-dir", metavar="PATH")
@@ -69,100 +73,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _add_bootstrap_args(sp: argparse.ArgumentParser) -> None:
+    """Flags shared by `run` and `serve` -- both go through the same
+    orchestrate.resolve_device/bootstrap_wifi_info path."""
+    sp.add_argument("--rescan", action="store_true", help="force a fresh BT scan + picker even if a device is cached")
+    sp.add_argument("--device", metavar="MAC", help="target a specific device (must be cached, or combine with --channel)")
+    sp.add_argument("--channel", type=int, metavar="N", help="force an RFCOMM channel, skip discovery")
+    sp.add_argument("--non-interactive", action="store_true", help="never prompt; fail if no usable cached device")
+    sp.add_argument("--radio-coexistence-workaround", action="store_true",
+                     help="disconnect WiFi before the Bluetooth step, for combo-chip hardware that can't use both radios at once (e.g. Raspberry Pi's onboard BCM4345C0)")
+    sp.add_argument("--wifi-iface", metavar="IFACE", help="WiFi interface to use (default: autodetect)")
+    sp.add_argument("--bt-timeout", type=float, default=90.0, metavar="SECONDS",
+                     help="total time budget for Bluetooth-stage retries (default: 90)")
+    sp.add_argument("--scan-duration", type=float, default=10.0, metavar="SECONDS", help="BT scan duration (default: 10)")
+    sp.add_argument("--config-dir", metavar="PATH", help="override the cache directory (default: $XDG_CONFIG_HOME/aa-hmi)")
+
+
 def _cache_path(args) -> Path:
     return Path(args.config_dir) if args.config_dir else cache.default_cache_path()
 
 
-def _pick_device_interactively(devices: list[BtDevice]) -> BtDevice | None:
-    if not devices:
-        print("No Bluetooth devices found.", file=sys.stderr)
-        return None
-    print("\nBluetooth devices found:", file=sys.stderr)
-    for i, d in enumerate(devices, 1):
-        print(f"  {i}. {d.name}  [{d.mac}]", file=sys.stderr)
-    while True:
-        choice = input(f"Select a device [1-{len(devices)}] (or blank to cancel): ").strip()
-        if not choice:
-            return None
-        if choice.isdigit() and 1 <= int(choice) <= len(devices):
-            return devices[int(choice) - 1]
-        print("Invalid choice.", file=sys.stderr)
-
-
-def _resolve_device(args, bt: BluetoothCtl, cache_path: Path) -> tuple[str, cache.DeviceRecord | None]:
-    """Returns (mac, cached_record_or_None)."""
-    if args.device:
-        return args.device, cache.get_device(cache_path, args.device)
-
-    if not args.rescan:
-        devices = cache.list_devices(cache_path)
-        if len(devices) == 1:
-            return devices[0].mac, devices[0]
-        if len(devices) > 1 and args.non_interactive:
-            raise NoDeviceSelectedError(
-                f"{len(devices)} cached devices and --non-interactive given -- "
-                f"use --device MAC to pick one."
-            )
-        if len(devices) > 1:
-            print("\nCached devices:", file=sys.stderr)
-            for i, d in enumerate(devices, 1):
-                print(f"  {i}. {d.name}  [{d.mac}]", file=sys.stderr)
-            choice = input(f"Select a cached device [1-{len(devices)}] (blank to rescan): ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(devices):
-                rec = devices[int(choice) - 1]
-                return rec.mac, rec
-
-    if args.non_interactive:
-        raise NoDeviceSelectedError("no cached device and --non-interactive given -- run once interactively first")
-
-    bt.power_on()
-    found = bt.scan(duration_s=args.scan_duration)
-    picked = _pick_device_interactively(found)
-    if picked is None:
-        raise NoDeviceSelectedError("no device selected")
-    return picked.mac, cache.get_device(cache_path, picked.mac)
-
-
-def _bootstrap_wifi_info(mac: str, channel: int | None, cached: cache.DeviceRecord | None,
-                          bt_timeout: float) -> tuple[WifiInfo, int, str]:
-    """Returns (WifiInfo, channel_used, discovery_method)."""
-
-    def attempt():
-        if channel is not None:
-            sock = connect_rfcomm(mac, channel)
-            try:
-                return get_wifi_info(sock), channel, "forced"
-            finally:
-                sock.close()
-        if cached and cached.rfcomm_channel is not None:
-            try:
-                sock = connect_rfcomm(mac, cached.rfcomm_channel)
-                try:
-                    return get_wifi_info(sock), cached.rfcomm_channel, cached.discovery_method or "cached"
-                finally:
-                    sock.close()
-            except (OSError, AaHmiError) as exc:
-                log(f"  cached channel {cached.rfcomm_channel} failed ({exc}), rediscovering...")
-        result = find_channel(mac, try_get_wifi_info)
-        try:
-            info = get_wifi_info(result.sock)
-        finally:
-            result.sock.close()
-        return info, result.channel, result.discovery_method
-
-    try:
-        return retry_with_backoff(
-            attempt, max_attempts=20, base_delay=2.0, max_delay=15.0,
-            time_budget=bt_timeout, retryable=_bt_stage_retryable,
-        )
-    except RetryExhaustedError as exc:
-        from .errors import HINT_FLAKY_CLASSIC_BT, HINT_SINGLE_CONNECTION_SLOT
-        print(f"\n{HINT_SINGLE_CONNECTION_SLOT}\n\n{HINT_FLAKY_CLASSIC_BT}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-
-def _bt_stage_retryable(exc: BaseException) -> bool:
-    return is_retryable_oserror(exc) or isinstance(exc, (NoChannelFoundError, socket.timeout))
+def _selection_args(args) -> orchestrate.DeviceSelectionArgs:
+    return orchestrate.DeviceSelectionArgs(
+        device=args.device, rescan=args.rescan,
+        non_interactive=args.non_interactive, scan_duration=args.scan_duration,
+    )
 
 
 def cmd_run(args) -> int:
@@ -195,7 +130,7 @@ def _cmd_run_inner(args) -> int:
     cache_path = _cache_path(args)
     bt = BluetoothCtl(timeout=max(10.0, args.bt_timeout / 6))
 
-    mac, cached = _resolve_device(args, bt, cache_path)
+    mac, cached = orchestrate.resolve_device(_selection_args(args), bt, cache_path)
 
     bt.power_on()
     if not bt.pair(mac):
@@ -205,7 +140,9 @@ def _cmd_run_inner(args) -> int:
     with coexistence.wifi_disconnected_for_bluetooth(
         args.wifi_iface, enabled=args.radio_coexistence_workaround
     ):
-        info, channel_used, method = _bootstrap_wifi_info(mac, args.channel, cached, args.bt_timeout)
+        info, channel_used, method, _rfcomm_sock = orchestrate.bootstrap_wifi_info(
+            mac, args.channel, cached, args.bt_timeout,
+        )  # _rfcomm_sock is always None here -- confirm_connected defaults to False for `run`
 
         cache.upsert_device(
             cache_path, mac,
@@ -236,6 +173,29 @@ def _cmd_run_inner(args) -> int:
     return 0
 
 
+def cmd_serve(args) -> int:
+    """Thin wrapper matching cmd_run's shape -- daemon.py owns the actual
+    orchestration/reconnect logic, cli.py just parses args and translates
+    exceptions to exit codes the same way cmd_run does."""
+    from . import daemon  # local import: keeps `aa-hmi run`/list/forget free of video/ipc imports
+    try:
+        return daemon.run_daemon(args)
+    except GroundTruthNotConfirmedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except NmcliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        if "not authorized" in str(exc).lower():
+            print(f"\n{HINT_NMCLI_NOT_AUTHORIZED}", file=sys.stderr)
+        return 1
+    except AaHmiError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nshutting down.", file=sys.stderr)
+        return 0
+
+
 def cmd_list(args) -> int:
     devices = cache.list_devices(_cache_path(args))
     if not devices:
@@ -263,7 +223,7 @@ def cmd_forget(args) -> int:
     return 1
 
 
-_SUBCOMMANDS = ("run", "list", "forget")
+_SUBCOMMANDS = ("run", "serve", "list", "forget")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -279,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "run"
     if command == "run":
         return cmd_run(args)
+    if command == "serve":
+        return cmd_serve(args)
     if command == "list":
         return cmd_list(args)
     if command == "forget":

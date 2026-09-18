@@ -1,0 +1,42 @@
+# Template systemd unit for running `aa-hmi serve` unattended.
+#
+# IMPORTANT: a systemd service has NO console/logind session at all --
+# it will hit nmcli's "Not authorized to control networking" polkit issue
+# even more reliably than a plain SSH session does. Set up the polkit
+# rule in ../../docs/networkmanager-permissions.md FIRST, or this unit
+# will fail at the WiFi-connect step every time. That doc's fix is a
+# one-time, ~30s change; there is no per-service workaround for it.
+#
+# Install (adjust User=/paths for your setup first):
+#   sudo cp aa-hmi.service /etc/systemd/system/aa-hmi.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now aa-hmi
+#   journalctl -u aa-hmi -f          # follow logs
+#
+# This is a starting template, not a tuned production unit -- adjust
+# User, WorkingDirectory, and the ExecStart path/flags for your install
+# method (pipx vs venv -- see the README's Install section) and your
+# actual device (--device MAC once you have one cached, to skip the
+# interactive picker path entirely even though --non-interactive is
+# already the default for `serve`).
+
+[Unit]
+Description=aa-hmi display-server daemon
+After=network.target bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=peter
+# If installed via pipx: ExecStart=/home/peter/.local/bin/aa-hmi serve -v
+# If installed via venv: ExecStart=/home/peter/aa-hmi/.venv/bin/aa-hmi serve -v
+ExecStart=/home/peter/.local/bin/aa-hmi serve -v
+Restart=on-failure
+RestartSec=10
+# aa-hmi serve already has its own internal reconnect loop for a dropped
+# *video session* -- this systemd-level restart is the outer safety net
+# for the whole process dying unexpectedly (an unhandled exception, OOM,
+# etc), not the normal reconnect path.
+
+[Install]
+WantedBy=multi-user.target

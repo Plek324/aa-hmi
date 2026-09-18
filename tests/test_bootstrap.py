@@ -6,7 +6,7 @@ match the real WifiInfoResponse), without needing real hardware.
 """
 import socket
 
-from aa_hmi import bootstrap, protocol
+from aa_hmi import bootstrap, messages, protocol
 from aa_hmi.messages import MessageId
 
 # Real bytes from tests/fixtures/ground_truth_probe_session.txt
@@ -84,3 +84,18 @@ def test_try_get_wifi_info_returns_none_for_wrong_service_on_this_channel():
     mistaken for a valid response."""
     sock = FakeSocket(b"", timeout_on_first_recv=True)  # nothing ever comes back
     assert bootstrap.try_get_wifi_info(sock, read_timeout=0.1) is None
+
+
+def test_confirm_wifi_connected_sends_the_exact_confirmed_bytes():
+    """Regression test for a real integration bug found while bringing up
+    `aa-hmi serve` (2026-09-18): without these two messages, the display's
+    TCP video port refused connections even after WiFi joined
+    successfully. Bytes are the exact ones captured from a real working
+    aa-proxy-rs probe session -- see messages.py."""
+    sock = FakeSocket(b"")
+    bootstrap.confirm_wifi_connected(sock)
+    expected = (
+        protocol.make_rfcomm_frame(MessageId.WIFI_START_RESPONSE, messages.WIFI_START_RESPONSE_PAYLOAD)
+        + protocol.make_rfcomm_frame(MessageId.WIFI_CONNECT_STATUS, messages.WIFI_CONNECT_STATUS_PAYLOAD)
+    )
+    assert sock.sent == expected

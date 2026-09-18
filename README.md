@@ -1,53 +1,75 @@
 # aa-hmi
 
-Scan for nearby Bluetooth devices, pick one, pair with it, pull its WiFi
-credentials over the classic "AA Wireless" RFCOMM bootstrap handshake, and
-join that WiFi network — with the device and credentials cached so the
-next run just reconnects.
+A generic display-server daemon for cheap wireless Android-Auto-style
+head units — the kind that host their own WiFi AP and hand out custom
+video/touch access to whatever phone asks over Bluetooth first. `aa-hmi`
+does everything needed to turn one of these into a touchscreen output for
+**any separate program**: Bluetooth scan/pair, WiFi-credential bootstrap
+and connect, the TCP/TLS video session with the display, and a small
+local socket protocol so your own program can push rendered frames in and
+get touch events back out — without knowing anything about Bluetooth, AA
+Wireless, or TLS.
 
-This targets cheap wireless Android-Auto-style head units (the kind that
-host their own WiFi AP and hand its credentials to whatever phone asks
-over Bluetooth first — see [How it works](#how-it-works)), but nothing
-here is tied to Android Auto video specifically. It's meant as a small,
-reusable building block for anyone's own project that wants a live
-connection to one of these devices.
+```bash
+aa-hmi serve                     # bootstrap + hold the display session + serve IPC
+python3 examples/clock.py        # a separate program, talking only to the socket protocol
+```
 
 ## Status
 
-**Confirmed working end-to-end** against a real TF811BT motorcycle
-display (2026-09-18): Bluetooth scanning, interactive device picker,
-pairing, RFCOMM channel discovery (SDP fast-path + brute-force fallback
-with protocol validation), the `WifiInfoRequest`/`WifiInfoResponse`
-handshake itself (bytes confirmed from a real capture — see
-[`docs/protocol-notes.md`](docs/protocol-notes.md#the-full-confirmed-sequence)),
-the credential cache, and the `nmcli`-based WiFi connect step.
+**Bluetooth + WiFi bootstrap: confirmed working end-to-end** against a
+real TF811BT motorcycle display (2026-09-18) — see
+[Tested with](#tested-with) and
+[`docs/protocol-notes.md`](docs/protocol-notes.md#the-full-confirmed-sequence).
 
-The confirmed handshake bytes came from exactly one device so far. If you
-try this against different head-unit hardware, please open an issue/PR
-either way (works identically, or behaves differently) — see
-[`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md) for
-the re-verification procedure.
+**Daemon mode (`aa-hmi serve`): confirmed working end-to-end** against the
+same real display (2026-09-18) — full bootstrap → TCP/TLS handshake →
+video + touch channels opened → `examples/hello_world.py` connected over
+the local IPC socket and sent a real frame, no errors on either side. One
+real integration bug was found and fixed along the way: the RFCOMM/Bluetooth
+link must stay open through the TCP connect, not just have been used (see
+[`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)). Touch
+input is a confirmed-working channel-open with raw bytes relayed — real
+x/y decode is an explicit placeholder, not yet done (see below). **Not yet
+run**: the multi-hour soak test for the session-persistence question, and
+full multi-cycle reconnect testing (see
+[`docs/video-live-verification.md`](docs/video-live-verification.md) for
+what's left).
 
-## What this is / isn't
+## What this is
 
-- **Is**: a Bluetooth → WiFi-credential-bootstrap tool, and a WiFi-connect
-  convenience on top of that.
-- **Isn't**: an Android Auto video client. It doesn't render anything to
-  the head unit's screen. For that, see the sibling project
-  `aa_pi2display` (a local sibling project, not yet published), which
-  impersonates an Android Auto phone to stream custom video to one of
-  these displays — and which this tool's WiFi-bootstrap step was
-  originally extracted and generalized from.
+- **Is**: the whole "connect to this display and let a separate program
+  use it" layer — Bluetooth, WiFi, TLS video session, touch relay, and a
+  documented local socket protocol any language can talk to.
+- **Two levels of use**: `aa-hmi run` alone if you just want WiFi
+  credentials/connectivity (a building block, useful on its own);
+  `aa-hmi serve` for the full daemon.
+- **Supersedes** the sibling `aa_pi2display` project, which proved the
+  underlying TCP/TLS video-streaming approach works but was always a
+  one-shot script, never something another program could build on.
+  `aa_pi2display` is kept around for its protocol research/reverse-engineering
+  value (`real-protocol-findings.md` is genuinely extensive), not as
+  something to keep running day to day.
+- **Isn't** a GUI toolkit or a content renderer — it moves already-rendered
+  RGB frames to the display and relays touch events back, nothing more.
+  What to actually draw is up to your own program (see
+  [`examples/`](examples/) for the simplest possible ones).
 
 ## Prerequisites
 
 - Linux with [BlueZ](http://www.bluez.org/) (`bluetoothctl`) and
   [NetworkManager](https://networkmanager.dev/) (`nmcli`) — both are
   installed by default on Raspberry Pi OS.
-- Python 3.9+. **Zero pip runtime dependencies** — this uses only the
-  standard library (including `socket.AF_BLUETOOTH`/`BTPROTO_RFCOMM` for
-  the actual RFCOMM connection) and shells out to `bluetoothctl`/`nmcli`
-  as separate processes.
+- **For `aa-hmi serve` (daemon mode) only**: `openssl` (self-signed cert,
+  auto-generated on first run) and `ffmpeg` (per-frame H.264 encoding).
+  `aa-hmi run` alone needs neither.
+- Python 3.9+. **Zero pip runtime dependencies for `aa-hmi` itself** —
+  only the standard library (including `socket.AF_BLUETOOTH`/`BTPROTO_RFCOMM`
+  for RFCOMM and `socket.AF_UNIX` for the local IPC socket) and shelling
+  out to `bluetoothctl`/`nmcli`/`openssl`/`ffmpeg` as separate processes.
+  Pillow is only needed by the *example client apps* (`pip install -e
+  .[examples]`), not by `aa-hmi` itself — your own content-producing
+  program can use whatever rendering approach it wants.
 - A Bluetooth adapter, obviously, and a target head unit that's powered
   on and discoverable.
 
@@ -136,6 +158,43 @@ Runs the Bluetooth bootstrap only, skips the `nmcli` step, and prints the
 credentials as JSON on stdout — useful if some other tool wants to do its
 own WiFi connection logic.
 
+### Daemon mode
+
+```bash
+aa-hmi serve
+```
+
+Does everything `run` does (bootstrap, connect), then holds the TCP/TLS
+video session open and listens on a local Unix socket
+(`$XDG_RUNTIME_DIR/aa-hmi/video.sock` by default) for a separate program
+to push rendered frames to and receive touch events from — see
+[`docs/ipc-protocol.md`](docs/ipc-protocol.md) for the full wire spec.
+Defaults to non-interactive (an unattended daemon must never block on a
+prompt) — cache a device with `aa-hmi run` first, or pass `--device MAC`.
+
+In another terminal (or your own program, anywhere, in any language that
+can open a Unix socket):
+
+```bash
+python3 examples/clock.py            # --interval SECONDS, default 5
+```
+
+See [`examples/`](examples/) for the simplest possible clients
+(`hello_world.py`, `clock.py`) using the reference Python client library,
+`aa_hmi.ipc.client.AaHmiClient` — that library (or the wire spec directly,
+in another language) is the entire interface your own program needs; it
+never touches anything else in `aa-hmi`.
+
+On any drop of the video session (display power-cycled, moved out of
+range, etc), `serve` automatically re-runs the full bootstrap and
+reconnects — see
+[`docs/video-protocol-notes.md`](docs/video-protocol-notes.md) for why
+that's the safe default given one still-open question about this
+hardware. For unattended/boot-time operation, see
+[`deploy/systemd/aa-hmi.service`](deploy/systemd/aa-hmi.service) — **read
+its comment about the polkit/nmcli permission issue first**, or the
+service will fail at the WiFi-connect step every time.
+
 ## CLI reference
 
 ```
@@ -156,6 +215,15 @@ aa-hmi run [options]        # scan/pair/bootstrap/connect (default command)
   --config-dir PATH          override the cache directory
   -v, --verbose
 
+aa-hmi serve [options]      # full daemon: bootstrap + hold display session + serve IPC
+  (all of `run`'s bootstrap flags above, EXCEPT --no-wifi-connect/--json, plus:)
+  --non-interactive           defaults to true for serve (unlike run)
+  --socket-path PATH         IPC socket location (default: $XDG_RUNTIME_DIR/aa-hmi/video.sock)
+  --display-ip IP            display's IP on its own WiFi AP (default: 192.168.10.1)
+  --cert PATH, --key PATH    TLS cert/key paths (default: auto-generated under --config-dir)
+  --persistent-session        EXPERIMENTAL: see docs/video-protocol-notes.md
+  --reconnect-max-attempts N  give up after N consecutive reconnect failures (default: retry forever)
+
 aa-hmi list                  show cached devices
 aa-hmi forget <mac-or-name>  remove one cached device
 aa-hmi forget --all          remove every cached device
@@ -171,6 +239,15 @@ speak just the phone's side of that opening handshake gets the
 credentials for free, without doing anything resembling a full Android
 Auto session. See [`docs/protocol-notes.md`](docs/protocol-notes.md) for
 the full wire-level writeup.
+
+Once WiFi is up, `serve` opens a second, separate protocol over TCP/TLS
+(port 29880) — a real TLS 1.2 handshake, then a video channel and a touch
+channel multiplexed over it. See
+[`docs/video-protocol-notes.md`](docs/video-protocol-notes.md) for that
+side, including the one genuinely tricky bug (a TLS-handshake-completion
+ordering issue) and why per-frame encoding was chosen over a persistent
+pipe. The local socket protocol bridging that to your own program is
+documented separately in [`docs/ipc-protocol.md`](docs/ipc-protocol.md).
 
 ## Tested with
 
@@ -236,6 +313,16 @@ but these are worth knowing about:
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
   (usually `~/.config/aa-hmi/devices.json`). It's a local convenience
   cache, not a secrets vault.
+- **Touching the display brings up its own native popup menu**, never
+  seen with a real phone connected — it may cover whatever you're
+  streaming. No known way to suppress it yet. See
+  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
+- **Whether a video session survives long-term without periodic
+  Bluetooth re-arming is genuinely unverified** — `serve` always
+  fully reconnects on any drop regardless, so this doesn't break
+  anything, it just might reconnect more than strictly necessary. See
+  the soak-test task in
+  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 
 ## Troubleshooting
 
@@ -278,11 +365,21 @@ Issues and PRs welcome — especially:
 - A D-Bus discovery backend — see
   [`docs/discovery-backends.md`](docs/discovery-backends.md) for the seam
   it should slot into.
+- **Completing the touch ground-truth capture** (real x/y/pointer_id/action
+  field numbers) — see [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s
+  follow-up task. This is the single highest-value thing to work on if
+  you want touch to actually be usable.
+- **Running the daemon-mode soak test** — leave `examples/clock.py`
+  running for hours against real hardware and report what you find about
+  the session-persistence question (same doc).
+- Working through [`docs/video-live-verification.md`](docs/video-live-verification.md)'s
+  staged checklist on your own hardware and reporting results either way.
 
 Run the test suite with `pytest` (no hardware needed — see
-[`tests/`](tests/); the protocol/cache/retry logic is fully unit-tested,
-live-hardware verification is a separate manual process documented
-alongside the code).
+[`tests/`](tests/); protocol/cache/retry/IPC-framing logic is fully
+unit-tested — `ffmpeg`/`openssl`-dependent and `AF_UNIX`-dependent tests
+skip cleanly when those aren't available on your platform — live-hardware
+verification is a separate manual process documented alongside the code).
 
 ## Security notes
 
@@ -293,6 +390,11 @@ alongside the code).
 - The credential cache holds a plaintext WiFi password on disk (0600
   permissions) — treat it like any other local WiFi credential store, not
   a secrets vault.
+- The daemon's local IPC socket (`$XDG_RUNTIME_DIR/aa-hmi/video.sock`) is
+  `0600`/local-machine-only by design, not a network service — anything
+  that can open a Unix socket on the same machine can connect (there's no
+  further auth), which is fine for its intended single-user-Pi use case
+  but worth knowing if you're on a genuinely shared machine.
 
 ## License
 

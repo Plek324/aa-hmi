@@ -14,10 +14,12 @@ from __future__ import annotations
 import shutil
 import socket
 import subprocess
+import threading
 from dataclasses import dataclass
 
 from .errors import NoChannelFoundError
 from .log import log
+from .retry import RetryCancelledError
 
 MAX_CHANNEL = 30
 
@@ -75,17 +77,29 @@ def connect_rfcomm(mac: str, channel: int, timeout: float = 3.0) -> socket.socke
 
 
 def find_channel(mac: str, validate, *, connect_timeout: float = 3.0,
-                  sdptool_probe=None) -> ChannelResult:
+                  sdptool_probe=None, cancel_event: threading.Event | None = None) -> ChannelResult:
     """Try each candidate channel in order; for each that accepts a raw
     RFCOMM connection, call validate(sock) -> bool to check whether it
     actually speaks the expected protocol (real callers pass something
     that sends WifiInfoRequest and checks for a structurally valid
     WifiInfoResponse -- see bootstrap.py). Returns the first channel that
     both connects and validates; closes every rejected socket along the
-    way. Raises NoChannelFoundError if nothing worked."""
+    way. Raises NoChannelFoundError if nothing worked.
+
+    cancel_event, if given and set, stops BETWEEN channel attempts
+    (raises RetryCancelledError) -- found live to matter (2026-09-18):
+    this whole function is a single ~90s-worst-case blocking call from
+    retry_with_backoff's point of view (its own cancel_event is only
+    checked between *entire* calls to this function, not during one), so
+    without checking here too, a daemon shutdown signal received partway
+    through a 30-channel scan wouldn't be noticed until the scan finished
+    on its own. Does not interrupt a single channel's connect() already
+    in flight (bounded by connect_timeout anyway, default 3s)."""
     candidates = build_channel_candidates(mac, sdptool_probe=sdptool_probe)
     sdp_count = len(_sdp_channels_via_sdptool(mac)) if sdptool_probe is None else 0
     for idx, channel in enumerate(candidates):
+        if cancel_event is not None and cancel_event.is_set():
+            raise RetryCancelledError(idx)
         log(f"  trying RFCOMM channel {channel} ({idx + 1}/{len(candidates)})...",
             verbose_only=True, verbose=True)
         try:

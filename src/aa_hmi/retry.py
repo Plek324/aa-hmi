@@ -10,6 +10,7 @@ quick retries (see errors.HINT_FLAKY_CLASSIC_BT).
 """
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable, TypeVar
 
@@ -23,6 +24,20 @@ class RetryExhaustedError(Exception):
         self.attempts = attempts
         self.last_exc = last_exc
         super().__init__(f"gave up after {attempts} attempt(s); last error: {last_exc!r}")
+
+
+class RetryCancelledError(Exception):
+    """Raised instead of RetryExhaustedError when a cancel_event fires
+    between attempts or during a backoff wait -- distinct from ordinary
+    exhaustion so callers (daemon.py's shutdown path) can tell "gave up
+    because we were told to stop" apart from "gave up because nothing
+    worked." Does NOT interrupt an attempt already in progress -- see
+    retry_with_backoff's docstring for why that's a real, accepted
+    limitation, not an oversight."""
+
+    def __init__(self, attempts: int):
+        self.attempts = attempts
+        super().__init__(f"cancelled after {attempts} attempt(s)")
 
 
 def is_retryable_oserror(exc: BaseException) -> bool:
@@ -39,6 +54,7 @@ def retry_with_backoff(
     time_budget: float | None = None,
     retryable: Callable[[BaseException], bool] | tuple[type[BaseException], ...] = (OSError,),
     on_retry: Callable[[int, BaseException, float], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> T:
     """Call fn() until it succeeds, retrying on a retryable exception with
     exponential backoff (capped at max_delay), until max_attempts is
@@ -48,7 +64,24 @@ def retry_with_backoff(
     retryable is either an exception-type tuple (isinstance check) or a
     predicate(exc) -> bool, so callers can use errors.is_retryable_oserror
     for the errno-specific cases documented in errors.py.
+
+    cancel_event, if given, is checked BEFORE each attempt (raises
+    RetryCancelledError immediately if already set -- never even starts
+    fn() again) and used for the backoff wait instead of a plain
+    time.sleep (so a cancellation fires immediately rather than waiting
+    out the full backoff delay first). This does NOT interrupt an
+    attempt already in progress -- fn() itself has no way to be
+    cancelled mid-call from here. Found live to matter in practice
+    (2026-09-18): without this, `aa-hmi serve`'s SIGTERM handler could
+    set its stop_event and the daemon would still grind through an
+    entire in-progress ~90s Bluetooth bootstrap retry budget (including
+    starting a brand new one) before ever checking it -- this closes the
+    largest part of that gap (skipping new attempts and backoff waits),
+    even though a single already-in-flight attempt can still take a few
+    seconds more to finish on its own.
     """
+    if cancel_event is not None and cancel_event.is_set():
+        raise RetryCancelledError(0)
     start = time.monotonic()
     attempt = 0
     delay = base_delay
@@ -68,5 +101,9 @@ def retry_with_backoff(
             else:
                 log(f"  retry {attempt}/{max_attempts}: {type(exc).__name__}: {exc} "
                     f"(waiting {delay:.1f}s)", verbose_only=True, verbose=True)
-            time.sleep(delay)
+            if cancel_event is not None:
+                if cancel_event.wait(delay):
+                    raise RetryCancelledError(attempt) from exc
+            else:
+                time.sleep(delay)
             delay = min(delay * 2, max_delay)

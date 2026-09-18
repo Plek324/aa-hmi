@@ -1,6 +1,78 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+Daemon mode: `aa-hmi serve` — the full display-server piece, on top of
+0.1.0's Bluetooth/WiFi bootstrap. This is what turns `aa-hmi` into a
+replacement for the sibling `aa_pi2display` project's proof-of-concept
+scripts rather than a separate tool consumed by them.
+
+- `video_session.py` — the TCP/TLS Android-Auto-Wireless video session as
+  a reusable class, ported from `aa_pi2display`'s `aa_session.py` (proven
+  handshake sequence, including the critical MemoryBIO-flush-after-handshake
+  ordering fix, preserved exactly) but restructured for a long-running
+  daemon: explicit state, a background reader thread, thread-safe sends.
+- `encoder.py` — per-frame `ffmpeg` invocation (spawn, encode one image to
+  one keyframe, exit) instead of porting the sibling project's persistent-pipe
+  architecture, which had an unresolved black-screen bug under continuous
+  rendering. At this project's actual target rate (1 frame per 1–10s),
+  per-frame spawning is simpler and structurally avoids most of that bug's
+  root-cause categories. See `docs/video-protocol-notes.md`.
+- `touch_channel.py` — touch input, honestly represented as a placeholder:
+  channel-open and raw-bytes-arriving are proven, but real x/y/pointer_id
+  field decode was never actually implemented anywhere (an earlier doc's
+  "fully working" claim was inaccurate) — this release relays raw bytes
+  and documents the real follow-up task, rather than guessing.
+- A new local IPC protocol (`ipc/`) — Unix domain socket, `docs/ipc-protocol.md`
+  has the full language-agnostic wire spec — so any separate program can
+  push rendered frames in and receive touch events out, plus a reference
+  Python client library (`aa_hmi.ipc.client.AaHmiClient`).
+- `daemon.py` — orchestrates bootstrap → cert → video session → IPC
+  server, with automatic full reconnection (Bluetooth re-trigger included)
+  on any video-session drop — the safe default given a still-open question
+  about whether one Bluetooth trigger holds a session open indefinitely
+  (see `docs/video-protocol-notes.md`'s soak-test task).
+- `orchestrate.py` — the device-selection/WiFi-bootstrap logic extracted
+  out of `cli.py` (previously private functions there) so both `run` and
+  the new `serve` daemon share it without `daemon.py` importing `cli.py`.
+- Two example client apps, `examples/hello_world.py` and `examples/clock.py`,
+  using only the reference client library + Pillow.
+- `deploy/systemd/aa-hmi.service` — a starting template for unattended
+  operation (with an explicit warning about the nmcli/polkit permission
+  issue, which is worse under systemd than under a plain SSH session).
+- New docs: `docs/video-protocol-notes.md`, `docs/ipc-protocol.md`,
+  `docs/video-live-verification.md`.
+- **Live-verified end-to-end** (2026-09-18) against the real display:
+  full bootstrap → TCP/TLS handshake → video/touch channels →
+  `examples/hello_world.py` sending a real frame over the IPC socket, no
+  errors. Two real bugs found and fixed in the process:
+  - The RFCOMM/Bluetooth link has to stay **open** through the TCP
+    connect (not just have sent the right messages) for the display's
+    video port to accept a connection — `WifiStartResponse`/`WifiConnectStatus`
+    (bytes confirmed from the ground-truth capture) now get sent, and
+    `orchestrate.bootstrap_wifi_info(..., confirm_connected=True)` keeps
+    the socket open and returns it instead of closing it, for `daemon.py`
+    to hold through the video session's lifetime. See
+    `docs/video-protocol-notes.md`.
+  - `SIGTERM` during an in-progress Bluetooth bootstrap retry didn't
+    actually stop the daemon promptly — it kept grinding through the full
+    retry/backoff budget (which, combined with a flaky-BT episode, could
+    mean minutes). `retry_with_backoff` gained an optional `cancel_event`
+    (checked before each attempt and during backoff waits, via
+    `retry.RetryCancelledError`), threaded through
+    `orchestrate.bootstrap_wifi_info` from `daemon.py`'s own shutdown
+    `stop_event`. Doesn't interrupt an attempt already in flight, but
+    closes the large majority of the gap.
+  - Also documented: a stale kernel-level Bluetooth ACL connection that
+    `bluetoothctl`/D-Bus doesn't report at all, found live after repeated
+    connect/disconnect testing cycles — `hcitool con` shows it,
+    `sudo hciconfig hci0 down && ... up` clears it. See
+    `docs/video-protocol-notes.md`'s new Troubleshooting section.
+- **Still not done**: the multi-hour soak test for the session-persistence
+  question, and broader multi-cycle reconnect testing — see
+  `docs/video-live-verification.md`'s remaining staged checklist items.
+
+## 0.1.0
 
 Initial release.
 

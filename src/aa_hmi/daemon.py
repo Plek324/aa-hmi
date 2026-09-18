@@ -1,0 +1,227 @@
+"""daemon.py -- `aa-hmi serve`: the full display-server daemon.
+
+Orchestrates, in order: device resolution + pairing (orchestrate.py) ->
+WiFi-credential bootstrap + connect (orchestrate.py, wifi.py, inside
+coexistence.py's WiFi-disconnect-for-BT workaround) -> cert.ensure_cert
+-> a VideoSession (video_session.py) -> an IpcServer (ipc/server.py)
+bridging FRAME-in/TOUCH-out between that session and any connected client
+program.
+
+Reconnect policy: on ANY drop of the video session (TLS error, TCP EOF,
+reader thread died), tear it down cleanly and re-run the ENTIRE bootstrap
+sequence from device resolution -- full Bluetooth re-trigger, full WiFi
+re-bootstrap. This is the safe default given docs/video-protocol-notes.md's
+still-open question of whether one Bluetooth trigger can hold a TCP
+session open indefinitely or whether periodic re-arming turns out to be
+needed: always re-arming is correct either way, just potentially wasteful
+if a lighter-weight reconnect would have worked. The IPC server itself is
+NOT torn down on a video-session drop -- a connected client keeps its
+socket; frames sent during the reconnect window are just dropped (with a
+rate-limited log) rather than erroring the client's connection.
+"""
+from __future__ import annotations
+
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
+
+from . import cache, cert, coexistence, encoder, orchestrate, wifi
+from .discovery import BluetoothCtl
+from .errors import HINT_VIDEO_SESSION_FLAKY
+from .ipc import protocol as ipc_wire
+from .ipc.server import IpcServer
+from .log import log
+from .retry import RetryCancelledError
+from .touch_channel import parse_touch_event
+from .video_session import VideoSession
+
+DEFAULT_ASSUME_PERSISTENT_SESSION = False
+_FRAME_DROP_LOG_INTERVAL = 5.0  # seconds between "dropping frame, no session" log lines
+
+
+class _SessionHolder:
+    """Mutable box so the IPC server's on_frame callback (registered once,
+    before the reconnect loop starts) can always reach whichever
+    VideoSession is current, across reconnects, without re-registering a
+    new callback each time."""
+
+    def __init__(self):
+        self.session: VideoSession | None = None
+        self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
+        self.frame_counter = 0
+        self.reconnect_count = 0
+        self._last_drop_log = 0.0
+
+    def close_session(self) -> None:
+        """Closes both the video session and the RFCOMM socket held open
+        alongside it (see _bootstrap_and_open_session for why the latter
+        must stay open through video-session setup) -- always call this
+        instead of closing session/rfcomm_sock separately, so the two
+        never get out of sync."""
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+        if self.rfcomm_sock is not None:
+            try:
+                self.rfcomm_sock.close()
+            except OSError:
+                pass
+            self.rfcomm_sock = None
+
+    def on_frame(self, frame_msg: ipc_wire.FrameMsg) -> None:
+        session = self.session
+        if session is None or not session.is_alive():
+            now = time.monotonic()
+            if now - self._last_drop_log > _FRAME_DROP_LOG_INTERVAL:
+                log("dropping a client frame -- no active video session right now (reconnecting?)")
+                self._last_drop_log = now
+            return
+        try:
+            access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
+            for au in access_units:
+                nal_bytes = encoder.assemble_nal_bytes(au)
+                self.frame_counter += 1
+                session.send_frame(nal_bytes, self.frame_counter * 33333)
+            log(f"  sent frame #{self.frame_counter} to the display ({len(access_units)} access unit(s))",
+                verbose_only=True, verbose=True)
+        except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
+            log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
+
+
+def _cache_path(args) -> Path:
+    return Path(args.config_dir) if args.config_dir else cache.default_cache_path()
+
+
+def _cert_paths(args, cache_path: Path) -> tuple[Path, Path]:
+    default_dir = cache_path.parent / "certs"
+    cert_file = Path(args.cert) if args.cert else default_dir / "fake_phone_cert.pem"
+    key_file = Path(args.key) if args.key else default_dir / "fake_phone_key.pem"
+    return cert_file, key_file
+
+
+def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
+                                 cert_file: Path, key_file: Path,
+                                 ipc_server: IpcServer, holder: _SessionHolder,
+                                 stop_event: threading.Event) -> VideoSession:
+    selection = orchestrate.DeviceSelectionArgs(
+        device=args.device, rescan=args.rescan,
+        non_interactive=args.non_interactive, scan_duration=args.scan_duration,
+    )
+    mac, cached = orchestrate.resolve_device(selection, bt, cache_path)
+
+    bt.power_on()
+    if not bt.pair(mac):
+        raise SystemExit(f"error: failed to pair with {mac}")
+
+    rfcomm_sock = None
+    with coexistence.wifi_disconnected_for_bluetooth(
+        args.wifi_iface, enabled=args.radio_coexistence_workaround
+    ):
+        # confirm_connected=True: keeps the RFCOMM/Bluetooth connection
+        # OPEN (returned as rfcomm_sock) rather than closing it right
+        # away. Confirmed live (2026-09-18): the display's TCP video port
+        # only accepts a connection while this link is still open --
+        # closing it immediately after the WiFi handshake (as `aa-hmi
+        # run` correctly does for its own narrower scope) left the video
+        # port refusing every connection attempt. See
+        # orchestrate.bootstrap_wifi_info's docstring and
+        # docs/video-protocol-notes.md. Held open for this whole session's
+        # lifetime out of caution (only confirmed it must be open AT
+        # TCP-connect time, not how much longer beyond that is actually
+        # required) -- closed in run_daemon's cleanup alongside the video
+        # session itself.
+        info, channel_used, method, rfcomm_sock = orchestrate.bootstrap_wifi_info(
+            mac, args.channel, cached, args.bt_timeout, confirm_connected=True, cancel_event=stop_event,
+        )
+        cache.upsert_device(
+            cache_path, mac,
+            rfcomm_channel=channel_used, discovery_method=method,
+            last_ssid=info.ssid, last_key=info.key, last_bssid=info.bssid,
+            last_security_mode_raw=info.security_mode_raw,
+            last_seen=cache.now_iso(), last_success=cache.now_iso(),
+        )
+        wifi.connect(info.ssid, info.key, iface=args.wifi_iface)
+
+    cert.ensure_cert(cert_file, key_file)
+
+    try:
+        session = VideoSession(args.display_ip, cert_file, key_file)
+        session.connect_and_handshake(timeout=10.0)
+        session.open_video_channel()
+        session.open_touch_channel(lambda raw: ipc_server.broadcast_touch(parse_touch_event(raw)))
+    except Exception:
+        if rfcomm_sock is not None:
+            rfcomm_sock.close()
+        raise
+
+    holder.session = session
+    holder.rfcomm_sock = rfcomm_sock
+    holder.frame_counter = 0
+    return session
+
+
+def _wait_until_dropped_or_stopped(session: VideoSession, stop_event: threading.Event,
+                                    poll_interval: float = 1.0) -> None:
+    while not stop_event.is_set():
+        if not session.is_alive():
+            log("video session no longer alive, will reconnect")
+            return
+        stop_event.wait(poll_interval)
+
+
+def run_daemon(args) -> int:
+    cache_path = _cache_path(args)
+    cert_file, key_file = _cert_paths(args, cache_path)
+    bt = BluetoothCtl(timeout=max(10.0, args.bt_timeout / 6))
+
+    stop_event = threading.Event()
+
+    def _handle_signal(signum, _frame):
+        log(f"received signal {signum}, shutting down...")
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    holder = _SessionHolder()
+    ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
+    ipc_server.start(on_frame=holder.on_frame)
+
+    consecutive_failures = 0
+    try:
+        while not stop_event.is_set():
+            try:
+                session = _bootstrap_and_open_session(args, bt, cache_path, cert_file, key_file, ipc_server,
+                                                       holder, stop_event)
+                if consecutive_failures > 0 and args.persistent_session:
+                    log(f"WARNING: reconnected after {consecutive_failures} failure(s) despite "
+                        f"--persistent-session -- this is a real data point for the soak-test "
+                        f"question in docs/video-protocol-notes.md, please report it")
+                consecutive_failures = 0
+                holder.reconnect_count += 1
+                log(f"=== display session established (connection #{holder.reconnect_count}), serving IPC ===")
+                _wait_until_dropped_or_stopped(session, stop_event)
+            except RetryCancelledError:
+                # stop_event fired while a bootstrap attempt was retrying/backing
+                # off -- see retry.retry_with_backoff's cancel_event docstring.
+                # Not a real failure, just the shutdown path; log plainly and
+                # let the outer `while not stop_event.is_set()` exit cleanly.
+                log("bootstrap cancelled (shutting down)")
+            except Exception as e:  # noqa: BLE001 -- a failed attempt must go through the retry/backoff path, not crash the daemon
+                consecutive_failures += 1
+                log(f"session attempt failed ({consecutive_failures} in a row): {type(e).__name__}: {e}")
+                if args.reconnect_max_attempts and consecutive_failures >= args.reconnect_max_attempts:
+                    print(f"\n{HINT_VIDEO_SESSION_FLAKY}", file=sys.stderr)
+                    return 1
+            finally:
+                holder.close_session()
+            if not stop_event.is_set():
+                delay = min(5.0 * max(consecutive_failures, 1), 30.0) if consecutive_failures else 2.0
+                log(f"reconnecting in {delay:.0f}s...")
+                stop_event.wait(delay)
+    finally:
+        ipc_server.stop()
+        holder.close_session()
+    return 0
