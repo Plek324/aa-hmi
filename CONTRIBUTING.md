@@ -23,9 +23,11 @@ and watch the log output.
 
 ## Where to start
 
-- **Highest value right now**: completing the `WifiInfoRequest`
-  ground-truth capture — see [`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md).
-  This unblocks the tool actually working end-to-end.
+- **Highest value right now**: re-running the `WifiInfoRequest`
+  ground-truth capture (already confirmed for one TF811BT unit — see
+  [`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md))
+  against *different* head-unit hardware, to find out whether the
+  handshake bytes/sequence generalize or vary by device/firmware.
 - Reports of how the "known hardware quirks" in the README show up (or
   don't) on head units other than the one this was built against.
 - A D-Bus discovery backend, if `bluetoothctl` genuinely doesn't work for

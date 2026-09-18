@@ -31,8 +31,24 @@ time) — so `aa-hmi` always falls back to brute-force scanning channels
 protocol. **Accepting a raw connection is not sufficient evidence** — on
 the one unit this has been tested against, channels 4, 7, 12 and 15 *all*
 accepted a raw RFCOMM connect, but only channel 4 was the real AA
-Wireless service. Validate with the actual handshake, not just a
-successful `connect()`.
+Wireless service in that earlier test. Validate with the actual
+handshake, not just a successful `connect()`.
+
+**The channel number isn't necessarily stable, either.** A later live run
+of `aa-hmi` itself against the exact same unit (same MAC, same BlueZ
+adapter, same day) found the real service on **channel 3**, not 4 —
+channel 4 had started refusing connections outright. Nothing about the
+head unit was reconfigured between these two findings; the most likely
+explanation is that BlueZ/the head unit's own RFCOMM channel assignment
+for a service can shift across Bluetooth stack restarts or re-pairs, not
+that it's a fixed per-device constant. This is a direct, practical
+argument for always validating via brute force rather than hardcoding a
+channel number once found and trusting it forever (which is what a
+static `aa-proxy-rs` config with `bt_wireless_proxy_hu_channel` pinned to
+one value does) — `aa-hmi`'s cache stores the last-known-good channel as
+a fast-path optimization, but always falls back to rediscovery if it
+stops working (see `rfcomm.py`/`bootstrap.py`), rather than treating the
+cached value as permanent.
 
 ## Framing
 
@@ -119,21 +135,41 @@ requires a field to be present — a strict protobuf library would reject
 this exact real-world message. Real devices are the ground truth here,
 not the spec.
 
-## `WifiInfoRequest` — what's still unconfirmed
+## The full confirmed sequence
 
-**The exact outbound bytes to elicit a `WifiInfoResponse` are not yet
-confirmed.** No `.proto` file for `WifiInfoRequest` is published anywhere
-found so far, which suggests (but does not confirm) an empty body. Until
-someone completes the capture procedure in
-[`capturing-ground-truth.md`](capturing-ground-truth.md) against a real
-head unit and fills in the real bytes, `src/aa_hmi/messages.py` keeps
-`GROUND_TRUTH_CONFIRMED = False` and `bootstrap.py` refuses to guess bytes
-at a real device.
+Captured 2026-09-18 against a real TF811BT display, via `aa-proxy-rs`'s
+`debug = true` probe-mode logging (procedure:
+[`capturing-ground-truth.md`](capturing-ground-truth.md); raw log:
+[`../tests/fixtures/ground_truth_probe_session.txt`](../tests/fixtures/ground_truth_probe_session.txt)).
+Reproduced identically across two separate RFCOMM connections in the same
+capture session:
 
-If/when that capture is done, update this section with:
-- Whether a `WifiVersionRequest`/`WifiVersionResponse` exchange happens
-  first, and its exact payload format.
-- `WifiInfoRequest`'s exact payload bytes (or confirmation that it's
-  genuinely empty).
-- Any other quirks observed (e.g. does the head unit send anything
-  unprompted before a request is sent?).
+1. **RFCOMM connects.**
+2. **HU → POC: `WifiVersionRequest` (id `4`), sent unprompted**, before
+   anything is requested — contains the head unit's supported WiFi
+   channel list (100 bytes: major/minor version + a long list of 2.4/5GHz
+   channel numbers) and empty `car_make`/`hu_model`/etc fields.
+   **No response is required** — the real `aa-proxy-rs` probe doesn't
+   send a `WifiVersionResponse` either, it just reads this one frame,
+   logs a "wasn't what I expected but continuing anyway" warning
+   internally, and moves straight on. `aa-hmi`'s `bootstrap.py` drains
+   and discards whatever arrives here (if anything — this is a
+   best-effort drain, not a required step, in case some other head unit
+   doesn't send anything unprompted).
+3. **POC → HU: `WifiInfoRequest` (id `2`), CONFIRMED EMPTY body
+   (`len=0`)** — this was a plausible guess before this capture, now
+   verified byte-for-byte from the real outbound frame log.
+4. **HU → POC: `WifiInfoResponse` (id `3`)** — the credentials, exactly
+   the payload already decoded above. Notably, **`aa-proxy-rs`'s own
+   strict protobuf parser fails to parse this exact real response**
+   (`Message 'WifiInfoResponse' is missing required fields`) — direct,
+   independent confirmation (from a completely different implementation)
+   that lenient parsing is the right call here, not a shortcut this
+   project happened to need.
+
+What follows in a real session — `WifiStartResponse` (id `7`) and
+`WifiConnectStatus` (id `6`), both sent POC → HU — is the proxy telling
+the head unit "I'm now connected and ready." That's out of `aa-hmi`'s
+scope (see "Message IDs" above): this tool stops at step 4, once it has
+the credentials, and uses them to join the WiFi network directly via
+`nmcli` rather than continuing the in-band handshake.

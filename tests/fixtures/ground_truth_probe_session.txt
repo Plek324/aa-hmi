@@ -1,0 +1,52 @@
+# Ground-truth capture for the RFCOMM WiFi-bootstrap handshake.
+#
+# Captured 2026-09-18 via aa-proxy-rs's debug=true ProxyFrameSniffer,
+# running in bt_wireless_proxy_mode="probe" on a Raspberry Pi against a
+# real TF811BT motorcycle Android Auto display (Bluetooth MAC
+# 00:88:21:0A:6C:0A, RFCOMM channel 4). Procedure: docs/capturing-ground-truth.md.
+# aa-proxy-rs binary: ~/aa-project/aa-proxy-rs/target/release/aa-proxy-rs
+# (built from https://github.com/aa-proxy/aa-proxy-rs, see that repo for
+# the exact commit/version if needed).
+#
+# Two connection attempts are included (the probe reconnected once after
+# the first RFCOMM session was reset by the peer at its 30s idle
+# timeout) -- both produced an IDENTICAL frame sequence, which is good
+# evidence this is stable/reproducible behavior, not a one-off fluke.
+#
+# Raw stdout from:
+#   sudo timeout 45 aa-proxy-rs -c /etc/aa-proxy-rs/config.toml
+# ANSI color codes stripped for readability; only the bluetooth-subsystem
+# lines relevant to the RFCOMM bootstrap are included below (the full log
+# also has unrelated USB-gadget-subsystem error lines interleaved between
+# the two connection attempts -- this Pi has no USB gadget hardware
+# configured, unrelated to Bluetooth/WiFi and not reproduced here).
+#
+# Decoded findings from this capture are written up in
+# docs/protocol-notes.md and src/aa_hmi/messages.py's module docstring.
+
+2026-09-18, 13:15:14.045 [INFO] bluetooth: bt-wireless-proxy: using configured HU RFCOMM channel 4 for 00:88:21:0A:6C:0A
+2026-09-18, 13:15:14.045 [INFO] bluetooth: bt-wireless-proxy: connecting to HU RFCOMM [00:88:21:0A:6C:0A]:4 without registering a second AA Wireless UUID profile
+2026-09-18, 13:15:14.106 [INFO] bluetooth: bt-wireless-proxy probe: connected to HU RFCOMM [00:88:21:0A:6C:0A]:4; waiting for WifiStartRequest
+2026-09-18, 13:15:15.685 [INFO] bluetooth: HU -> POC frame id=4 (WifiVersionRequest) len=100 payload=0801100020ec1220f11220f61220fb12208013208513208a13208f13209413209913209e1320a31320a81320b41320da2820822920aa2920802d20a82d20bc2820d02820e42820f828208c2920a02920b42920c82920f12c20852d20992d20ad2d20c12d
+2026-09-18, 13:15:15.685 [INFO] bluetooth: HU -> POC parsed WifiVersionRequest major=Some(1) minor=Some(0) channels=[2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 2484, 5210, 5250, 5290, 5760, 5800, 5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5745, 5765, 5785, 5805, 5825] car_make=None car_model=None car_year=None hu_make=None hu_model=None hu_sw_build=None hu_sw_version=None projection_ip=None projection_port=None
+2026-09-18, 13:15:15.685 [WARN] bluetooth: bt-wireless-proxy probe: first HU frame was 4, expected WifiStartRequest; continuing anyway
+2026-09-18, 13:15:15.686 [INFO] bluetooth: POC -> HU frame id=2 (WifiInfoRequest) len=0 payload=<empty>
+2026-09-18, 13:15:15.770 [INFO] bluetooth: HU -> POC frame id=3 (WifiInfoResponse) len=47 payload=0a0e54463831312d3163363432303161120831323334353637381a1136383a38663a63393a62333a32343a33372005
+2026-09-18, 13:15:15.770 [WARN] bluetooth: HU -> POC failed to parse WifiInfoResponse: Message `WifiInfoResponse` is missing required fields
+2026-09-18, 13:15:15.770 [INFO] bluetooth: POC -> HU frame id=7 (WifiStartResponse) len=2 payload=1800
+2026-09-18, 13:15:15.770 [INFO] bluetooth: POC -> HU frame id=6 (WifiConnectStatus) len=2 payload=0800
+2026-09-18, 13:15:15.770 [INFO] bluetooth: bt-wireless-proxy probe: bootstrap frames sent; keeping RFCOMM open until HU closes or 30s idle timeout
+2026-09-18, 13:15:34.149 [INFO] bluetooth: bt-wireless-proxy probe: RFCOMM ended: Connection reset by peer (os error 104)
+
+2026-09-18, 13:15:47.304 [INFO] bluetooth: using configured HU RFCOMM channel 4 for 00:88:21:0A:6C:0A
+2026-09-18, 13:15:47.304 [INFO] bluetooth: connecting to HU RFCOMM [00:88:21:0A:6C:0A]:4 without registering a second AA Wireless UUID profile
+2026-09-18, 13:15:47.333 [INFO] bluetooth: bt-wireless-proxy probe: connected to HU RFCOMM [00:88:21:0A:6C:0A]:4; waiting for WifiStartRequest
+2026-09-18, 13:15:48.719 [INFO] bluetooth: HU -> POC frame id=4 (WifiVersionRequest) len=100 payload=0801100020ec1220f11220f61220fb12208013208513208a13208f13209413209913209e1320a31320a81320b41320da2820822920aa2920802d20a82d20bc2820d02820e42820f828208c2920a02920b42920c82920f12c20852d20992d20ad2d20c12d
+2026-09-18, 13:15:48.719 [INFO] bluetooth: HU -> POC parsed WifiVersionRequest major=Some(1) minor=Some(0) channels=[2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 2484, 5210, 5250, 5290, 5760, 5800, 5180, 5200, 5220, 5240, 5260, 5280, 5300, 5320, 5745, 5765, 5785, 5805, 5825] car_make=None car_model=None car_year=None hu_make=None hu_model=None hu_sw_build=None hu_sw_version=None projection_ip=None projection_port=None
+2026-09-18, 13:15:48.720 [WARN] bluetooth: bt-wireless-proxy probe: first HU frame was 4, expected WifiStartRequest; continuing anyway
+2026-09-18, 13:15:48.720 [INFO] bluetooth: POC -> HU frame id=2 (WifiInfoRequest) len=0 payload=<empty>
+2026-09-18, 13:15:48.804 [INFO] bluetooth: HU -> POC frame id=3 (WifiInfoResponse) len=47 payload=0a0e54463831312d3163363432303161120831323334353637381a1136383a38663a63393a62333a32343a33372005
+2026-09-18, 13:15:48.804 [WARN] bluetooth: HU -> POC failed to parse WifiInfoResponse: Message `WifiInfoResponse` is missing required fields
+2026-09-18, 13:15:48.804 [INFO] bluetooth: POC -> HU frame id=7 (WifiStartResponse) len=2 payload=1800
+2026-09-18, 13:15:48.804 [INFO] bluetooth: POC -> HU frame id=6 (WifiConnectStatus) len=2 payload=0800
+2026-09-18, 13:15:48.804 [INFO] bluetooth: bt-wireless-proxy probe: bootstrap frames sent; keeping RFCOMM open until HU closes or 30s idle timeout

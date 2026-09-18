@@ -22,13 +22,38 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    import pwd  # POSIX only; used for the sudo-aware home lookup below
+except ImportError:  # pragma: no cover -- exercised via monkeypatching on non-POSIX
+    pwd = None  # type: ignore[assignment]
+
 CACHE_SCHEMA_VERSION = 1
 
 
 def default_cache_path() -> Path:
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else Path.home() / ".config"
+    base = Path(xdg) if xdg else _real_user_home() / ".config"
     return base / "aa-hmi" / "devices.json"
+
+
+def _real_user_home() -> Path:
+    """Path.home() resolves to root's home when running under sudo (sudo
+    resets $HOME to the target user's by default) -- confirmed live
+    (2026-09-18): `sudo aa-hmi run` (the documented workaround for
+    nmcli's polkit "Not authorized to control networking" -- see
+    README's Troubleshooting section) wrote the cache to /root/.config
+    instead of the invoking user's home, silently defeating the whole
+    point of caching for that person's later non-sudo runs. Falls back
+    to the real invoking user's home (via $SUDO_USER + the passwd
+    database) when actually running as root through sudo; Path.home()
+    otherwise."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and pwd is not None and hasattr(os, "geteuid") and os.geteuid() == 0:
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
 
 
 def now_iso() -> str:
@@ -85,6 +110,30 @@ def save(path: Path, cache: Cache) -> None:
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600 -- holds a plaintext WiFi password
     except OSError:
         pass  # best-effort on platforms/filesystems that don't support it (e.g. some Windows dev setups)
+    _maybe_chown_to_real_user(path)
+
+
+def _maybe_chown_to_real_user(path: Path) -> None:
+    """When running as root via sudo, _real_user_home() already points
+    the cache at the real invoking user's home -- but the file/directory
+    this process actually creates are still root-owned, which blocks
+    that same person's later non-sudo runs from reading OR updating it
+    (confirmed live, 2026-09-18: `sudo aa-hmi run` left a 0600 root-owned
+    file that a plain `aa-hmi list` as the normal user couldn't see).
+    Chowns the cache file and its immediate parent directory back to
+    $SUDO_UID:$SUDO_GID in that case -- just the immediate parent, not
+    the whole path, since the common case is that $HOME/.config already
+    exists with correct ownership and only aa-hmi's own subdirectory
+    under it is new."""
+    sudo_uid, sudo_gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if not (sudo_uid and sudo_gid and hasattr(os, "geteuid") and os.geteuid() == 0):
+        return
+    try:
+        uid, gid = int(sudo_uid), int(sudo_gid)
+        os.chown(path, uid, gid)
+        os.chown(path.parent, uid, gid)
+    except (OSError, ValueError):
+        pass  # best-effort -- don't fail a save() over cosmetic ownership
 
 
 def upsert_device(path: Path, mac: str, **fields) -> DeviceRecord:

@@ -1,4 +1,5 @@
-from aa_hmi.cli import build_parser, main
+from aa_hmi.cli import build_parser, cmd_run, main
+from aa_hmi.errors import HINT_NMCLI_NOT_AUTHORIZED, NmcliError
 
 
 def _fake_cmd(record, key="ok"):
@@ -63,6 +64,37 @@ def test_main_dispatches_to_list(monkeypatch):
     rc = main(["list"])
     assert rc == 0
     assert called.get("ok") is True
+
+
+def test_run_shows_polkit_hint_on_nmcli_not_authorized(monkeypatch, capsys):
+    """Regression test for a real failure hit during live testing
+    (2026-09-18): a plain SSH session without an active console/logind
+    session gets 'Not authorized to control networking' from nmcli.
+    cmd_run must surface the actionable hint, not just the raw error."""
+    def fake_inner(args):
+        raise NmcliError(["nmcli", "device", "wifi", "connect", "x"], 4,
+                          "Error: Failed to add/activate new connection: Not authorized to control networking.")
+
+    monkeypatch.setattr("aa_hmi.cli._cmd_run_inner", fake_inner)
+    parser = build_parser()
+    args = parser.parse_args(["run"])
+    rc = cmd_run(args)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert HINT_NMCLI_NOT_AUTHORIZED in captured.err
+
+
+def test_run_does_not_show_polkit_hint_for_unrelated_nmcli_failures(monkeypatch, capsys):
+    def fake_inner(args):
+        raise NmcliError(["nmcli", "connection", "delete", "x"], 1, "Error: Permission denied")
+
+    monkeypatch.setattr("aa_hmi.cli._cmd_run_inner", fake_inner)
+    parser = build_parser()
+    args = parser.parse_args(["run"])
+    rc = cmd_run(args)
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert HINT_NMCLI_NOT_AUTHORIZED not in captured.err
 
 
 def test_main_dispatches_to_forget(monkeypatch):

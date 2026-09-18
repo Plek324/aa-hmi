@@ -14,24 +14,19 @@ connection to one of these devices.
 
 ## Status
 
-**Works today:** Bluetooth scanning, interactive device picker, pairing,
-RFCOMM channel discovery (SDP fast-path + brute-force fallback with
-protocol validation), the credential cache, and the `nmcli`-based WiFi
-connect step.
+**Confirmed working end-to-end** against a real TF811BT motorcycle
+display (2026-09-18): Bluetooth scanning, interactive device picker,
+pairing, RFCOMM channel discovery (SDP fast-path + brute-force fallback
+with protocol validation), the `WifiInfoRequest`/`WifiInfoResponse`
+handshake itself (bytes confirmed from a real capture — see
+[`docs/protocol-notes.md`](docs/protocol-notes.md#the-full-confirmed-sequence)),
+the credential cache, and the `nmcli`-based WiFi connect step.
 
-**Not yet confirmed:** the exact bytes to *send* for `WifiInfoRequest` —
-the one message this tool needs to transmit to get a head unit to hand
-over its credentials. See [`docs/protocol-notes.md`](docs/protocol-notes.md)
-for what's confirmed vs. not, and
-[`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md) for how
-to capture it against real hardware. Until that's done (and
-`GROUND_TRUTH_CONFIRMED` in `src/aa_hmi/messages.py` is flipped to
-`True`), the tool will get all the way through pairing and channel
-discovery and then refuse to guess — loudly, not silently. **If you have
-a compatible head unit and a working
-[`aa-proxy-rs`](https://github.com/aa-proxy/aa-proxy-rs) probe-mode setup,
-completing this capture is the single most valuable contribution right
-now.**
+The confirmed handshake bytes came from exactly one device so far. If you
+try this against different head-unit hardware, please open an issue/PR
+either way (works identically, or behaves differently) — see
+[`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md) for
+the re-verification procedure.
 
 ## What this is / isn't
 
@@ -192,10 +187,20 @@ hardware may behave differently, but these are worth knowing about:
   required security settings. `aa-hmi` already deletes any existing
   profile by that name before connecting — if you still hit this outside
   of `aa-hmi`, try `nmcli connection delete '<ssid>'` manually first.
+- **`nmcli` connect fails with "Not authorized to control networking"**:
+  a polkit permissions issue, not a bug — confirmed live: a plain SSH
+  session with no active console/logind session doesn't get
+  NetworkManager's default allow-without-auth policy on some distros,
+  even though read-only nmcli commands (like listing WiFi networks) work
+  fine from the same session. Run `aa-hmi` with `sudo`, or grant your
+  user the `org.freedesktop.NetworkManager.network-control` polkit
+  action.
 - **"no RFCOMM channel ... spoke the expected protocol"**: either the
-  head unit isn't actually an AA-Wireless-style device, or ground truth
-  for `WifiInfoRequest` hasn't been confirmed for your unit yet — see
-  [Status](#status).
+  head unit isn't actually an AA-Wireless-style device, or its RFCOMM
+  channel assignment doesn't match what `aa-hmi` expects (channel numbers
+  have been observed to shift over time on the same unit — see
+  [`docs/protocol-notes.md`](docs/protocol-notes.md) — a plain rescan
+  should find it again).
 - **Pairing hangs or fails**: check `bluetoothctl` directly
   (`bluetoothctl pair <MAC>`) to see the raw prompt/error; `aa-hmi`
   auto-confirms passkey/authorization prompts during pairing (see

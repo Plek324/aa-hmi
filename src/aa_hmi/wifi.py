@@ -48,12 +48,19 @@ def find_wifi_iface() -> str | None:
 
 def delete_stale_profile(ssid: str) -> None:
     """Delete any existing connection profile named exactly `ssid`, if
-    present. Swallows only "no such connection" -- any other failure
-    propagates, since a permissions error here would otherwise surface
-    later as a much more confusing connect failure."""
+    present. Swallows only "no profile to delete" failures -- any other
+    failure propagates, since a permissions error here would otherwise
+    surface later as a much more confusing connect failure.
+
+    Confirmed live (2026-09-18, nmcli on Raspberry Pi OS / Debian
+    Trixie) that the real error text is "unknown connection", not "no
+    such connection" as originally guessed -- both phrasings are
+    accepted here in case wording varies by nmcli version."""
     proc = _run(["connection", "delete", ssid], check=False)
-    if proc.returncode != 0 and "no such connection" not in proc.stderr.lower():
-        raise NmcliError(["nmcli", "connection", "delete", ssid], proc.returncode, proc.stderr)
+    if proc.returncode != 0:
+        stderr_lower = proc.stderr.lower()
+        if "unknown connection" not in stderr_lower and "no such connection" not in stderr_lower:
+            raise NmcliError(["nmcli", "connection", "delete", ssid], proc.returncode, proc.stderr)
 
 
 def connect(ssid: str, password: str | None = None, *, iface: str | None = None,

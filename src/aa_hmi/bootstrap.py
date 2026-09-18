@@ -31,17 +31,38 @@ def _send_wifi_info_request(sock: socket.socket) -> None:
     sock.sendall(frame)
 
 
+def _drain_unsolicited_frame(sock: socket.socket, timeout: float) -> None:
+    """A real head unit sends one frame unprompted right after the RFCOMM
+    connection opens, before we've asked for anything -- confirmed via a
+    real capture: WifiVersionRequest (id=4), containing its supported WiFi
+    channel list. We don't need to respond to it (the real aa-proxy-rs
+    probe doesn't either), just not mistake it for the WifiInfoResponse
+    we're about to ask for. Best-effort: if nothing arrives within
+    `timeout`, that's fine too -- some head units may not send anything
+    here, so this is a drain, not a required handshake step."""
+    try:
+        frame = protocol.read_rfcomm_frame(sock, timeout=timeout)
+    except (socket.timeout, protocol.FrameError):
+        return
+    if frame is not None:
+        msg_id, payload = frame
+        log(f"  drained unsolicited frame msg_id={msg_id:#06x} len={len(payload)} "
+            f"before requesting WifiInfo", verbose_only=True, verbose=True)
+
+
 def try_get_wifi_info(sock: socket.socket, *, read_timeout: float = 2.0) -> WifiInfo | None:
-    """Used as the `validate` callback for rfcomm.find_channel: send
-    WifiInfoRequest, read one frame back, and return a WifiInfo if (and
-    only if) it decodes as a structurally valid WifiInfoResponse -- this
-    is what actually distinguishes the real AA-Wireless service channel
-    from other unrelated services that also happen to accept a raw RFCOMM
-    connection (aa_pi2display found this the hard way: channels 7/12/15
-    all accepted connections on the test unit, only channel 4 was real).
-    Returns None (not an exception) for "channel doesn't speak this
-    protocol" -- exceptions are reserved for real transport errors.
+    """Used as the `validate` callback for rfcomm.find_channel: drain any
+    unsolicited leading frame, send WifiInfoRequest, read one frame back,
+    and return a WifiInfo if (and only if) it decodes as a structurally
+    valid WifiInfoResponse -- this is what actually distinguishes the real
+    AA-Wireless service channel from other unrelated services that also
+    happen to accept a raw RFCOMM connection (aa_pi2display found this the
+    hard way: channels 7/12/15 all accepted connections on the test unit,
+    only channel 4 was real). Returns None (not an exception) for "channel
+    doesn't speak this protocol" -- exceptions are reserved for real
+    transport errors.
     """
+    _drain_unsolicited_frame(sock, timeout=read_timeout)
     _send_wifi_info_request(sock)
     try:
         frame = protocol.read_rfcomm_frame(sock, timeout=read_timeout)

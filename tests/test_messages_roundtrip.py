@@ -59,9 +59,12 @@ def test_open_network_detection_is_key_driven_not_enum_driven():
     assert info.is_open is True
 
 
-def test_ground_truth_not_confirmed_by_default():
-    """Guardrail: this should only ever be flipped to True alongside a real
-    completed capture per docs/capturing-ground-truth.md -- if this test
-    starts failing, make sure WIFI_INFO_REQUEST_PAYLOAD was actually
-    updated from a real capture, not just the flag."""
-    assert messages.GROUND_TRUTH_CONFIRMED is False
+def test_ground_truth_is_confirmed_and_matches_the_real_capture():
+    """Confirmed 2026-09-18 against a real TF811BT display -- see
+    messages.py's module docstring and
+    tests/fixtures/ground_truth_probe_session.txt for the raw capture.
+    Guardrail: if this ever needs to change (e.g. a different head unit
+    needs a non-empty WifiInfoRequest), update it alongside a real
+    captured fixture, not by just editing this assertion."""
+    assert messages.GROUND_TRUTH_CONFIRMED is True
+    assert messages.WIFI_INFO_REQUEST_PAYLOAD == b""

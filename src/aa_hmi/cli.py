@@ -27,7 +27,10 @@ from pathlib import Path
 from . import cache, coexistence, wifi
 from .bootstrap import get_wifi_info, try_get_wifi_info
 from .discovery import BluetoothCtl, BtDevice
-from .errors import AaHmiError, GroundTruthNotConfirmedError, NoChannelFoundError, NoDeviceSelectedError
+from .errors import (
+    AaHmiError, GroundTruthNotConfirmedError, HINT_NMCLI_NOT_AUTHORIZED,
+    NmcliError, NoChannelFoundError, NoDeviceSelectedError,
+)
 from .log import log
 from .messages import WifiInfo
 from .retry import RetryExhaustedError, is_retryable_oserror, retry_with_backoff
@@ -173,6 +176,11 @@ def cmd_run(args) -> int:
     except GroundTruthNotConfirmedError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except NmcliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        if "not authorized" in str(exc).lower():
+            print(f"\n{HINT_NMCLI_NOT_AUTHORIZED}", file=sys.stderr)
+        return 1
     except AaHmiError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

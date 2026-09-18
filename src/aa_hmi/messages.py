@@ -8,11 +8,29 @@ src/protos/WifiInfoResponse.proto. See docs/protocol-notes.md for the full
 writeup and the aa_pi2display sibling project's extracting-wifi-credentials.md
 for the original decoded capture this was cross-checked against.
 
-WifiInfoRequest's own outbound bytes (what must be *sent* to elicit a
-WifiInfoResponse) are NOT yet confirmed -- see docs/capturing-ground-truth.md
-for the capture procedure. Until that capture has been done and
-REQUEST_BYTES below filled in for real, bootstrap.py refuses to guess bytes
-at a real device.
+CONFIRMED (2026-09-18, captured against a real TF811BT display via
+aa-proxy-rs's debug=true probe-mode logging -- full raw log in
+tests/fixtures/ground_truth_probe_session.txt, procedure in
+docs/capturing-ground-truth.md). The real bootstrap sequence:
+
+  1. RFCOMM connects.
+  2. HU -> POC: WifiVersionRequest (id=4), sent UNPROMPTED by the head
+     unit before anything is requested. No response is required -- the
+     real aa-proxy-rs probe doesn't send a WifiVersionResponse either, it
+     just reads this one frame and moves on. bootstrap.py drains and
+     discards it (or whatever the HU sends first, if anything).
+  3. POC -> HU: WifiInfoRequest (id=2), CONFIRMED EMPTY body (len=0) --
+     this was a guess before, now verified byte-for-byte from the real
+     outbound frame log.
+  4. HU -> POC: WifiInfoResponse (id=3) -- the credentials. Notably,
+     aa-proxy-rs's OWN strict protobuf parser fails on this exact real
+     response ("Message `WifiInfoResponse` is missing required fields")
+     -- direct, independent confirmation that lenient parsing here (see
+     parse_wifi_info_response below) is the right call, not a shortcut.
+
+  What follows in a real session (WifiStartResponse id=7, WifiConnectStatus
+  id=6) is the head unit being told "I'm now connected" -- out of this
+  tool's scope (see docs/protocol-notes.md); aa-hmi stops at step 4.
 """
 from __future__ import annotations
 
@@ -35,25 +53,20 @@ class MessageId(IntEnum):
     WIFI_SETUP_INFO = 11
 
 
-# --- ground truth, filled in by Task 0 (docs/capturing-ground-truth.md) ---
+# --- ground truth, confirmed by Task 0 (docs/capturing-ground-truth.md) ---
 #
-# TODO(ground-truth): these are placeholders, NOT verified against a real
-# capture yet. Each is either the literal payload bytes to send for that
-# message, or None if the message is believed unnecessary/not yet confirmed
-# needed for this tool's narrow scope (reaching WifiInfoResponse only).
-#
-# WifiInfoRequest has no known .proto file, which suggests (but does not
-# confirm) an empty body -- a zero-length payload is a *plausible* guess,
-# consistent with how this project's own TCP-side protocol has empty-body
-# messages (e.g. AVChannelStopIndication in aa_session.py), but it is
-# exactly that: a guess. bootstrap.py treats this as unconfirmed and will
-# refuse to run against a real device until GROUND_TRUTH_CONFIRMED is
-# flipped to True by whoever completes the capture in
-# docs/capturing-ground-truth.md.
-GROUND_TRUTH_CONFIRMED = False
+# Confirmed 2026-09-18 against a real TF811BT display -- see the class
+# docstring above and tests/fixtures/ground_truth_probe_session.txt for
+# the raw capture this was decoded from.
+GROUND_TRUTH_CONFIRMED = True
 
-WIFI_INFO_REQUEST_PAYLOAD: bytes | None = b""  # unconfirmed guess -- see above
-WIFI_VERSION_REQUEST_PAYLOAD: bytes | None = None  # unconfirmed whether even needed first
+WIFI_INFO_REQUEST_PAYLOAD: bytes = b""  # confirmed empty -- real captured frame was len=0
+# WifiVersionRequest is sent BY the head unit, unprompted -- we never send
+# one ourselves, so there's no "payload to send" for it. Kept as a named
+# None (rather than removed) so it's easy to find if a future capture
+# against different hardware turns out to need an explicit
+# WifiVersionResponse reply after all.
+WIFI_VERSION_REQUEST_PAYLOAD: bytes | None = None
 
 
 class SecurityMode(IntEnum):
