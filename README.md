@@ -172,11 +172,40 @@ credentials for free, without doing anything resembling a full Android
 Auto session. See [`docs/protocol-notes.md`](docs/protocol-notes.md) for
 the full wire-level writeup.
 
+## Tested with
+
+Confirmed working end-to-end (see [Status](#status)) on this exact
+combination — other hardware/OS/software versions will very likely work
+too, but haven't been verified:
+
+- **Raspberry Pi**: Raspberry Pi 4 Model B Rev 1.2
+- **OS**: Debian GNU/Linux 13 "trixie" (Raspberry Pi OS 64-bit, aarch64),
+  kernel `6.18.39+rpt-rpi-v8`
+- **Python**: 3.13.5 (stock system Python, no extra packages needed at
+  runtime)
+- **BlueZ** (`bluetoothctl`): 5.82
+- **NetworkManager** (`nmcli`): 1.52.1
+- **Head unit**: a **Podofo 5" motorcycle Android Auto display**
+  (bought on AliExpress). Its Bluetooth/WiFi firmware identifies itself
+  as `TF811BT_xxxxxxxx` / SSID `TF811-xxxxxxxx` — "Podofo" is just the
+  retail brand this specific unit is sold under; `TF811BT` looks like the
+  actual chipset/module name baked into the firmware, and several
+  differently-branded AliExpress motorcycle/car displays are known to
+  reuse the same white-label internals, so this project's findings may
+  apply more broadly than just to units sold as "Podofo."
+
+If you try this against different hardware, please open an issue/PR
+either way (works identically, or behaves differently) — see
+[`docs/capturing-ground-truth.md`](docs/capturing-ground-truth.md) for
+the Bluetooth-protocol side and the quirks below for what's already
+known to vary.
+
 ## Known hardware quirks
 
-These come from real testing against one specific head unit (a TF811BT
-motorcycle display) during the sibling `aa_pi2display` project — your
-hardware may behave differently, but these are worth knowing about:
+These come from real testing against one specific head unit (the Podofo
+display in [Tested with](#tested-with) above, TF811BT-based) during the
+sibling `aa_pi2display` project — your hardware may behave differently,
+but these are worth knowing about:
 
 - **Single Bluetooth connection slot.** Many of these head units' classic
   BT radio only holds one connection at a time. If a phone (or anything
