@@ -39,7 +39,7 @@ now.**
   convenience on top of that.
 - **Isn't**: an Android Auto video client. It doesn't render anything to
   the head unit's screen. For that, see the sibling project
-  [aa_pi2display](https://github.com/REPLACE_ME/aa_pi2display), which
+  `aa_pi2display` (a local sibling project, not yet published), which
   impersonates an Android Auto phone to stream custom video to one of
   these displays — and which this tool's WiFi-bootstrap step was
   originally extracted and generalized from.
@@ -59,7 +59,7 @@ now.**
 ## Install
 
 ```bash
-git clone https://github.com/REPLACE_ME/aa-hmi.git
+git clone https://github.com/Plek324/aa-hmi.git
 cd aa-hmi
 pip install .
 # or, to hack on it: pip install -e .[dev]

@@ -7,7 +7,7 @@ anyone with different head-unit hardware to test against.
 ## Setup
 
 ```bash
-git clone https://github.com/REPLACE_ME/aa-hmi.git
+git clone https://github.com/Plek324/aa-hmi.git
 cd aa-hmi
 pip install -e .[dev]
 pytest

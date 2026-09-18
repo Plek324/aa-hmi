@@ -4,7 +4,7 @@
 real head unit — see [`protocol-notes.md`](protocol-notes.md) for why.
 This is the procedure to get 100%-certain ground truth instead, the same
 "capture real bytes, decode, replicate" method the sibling
-[`aa_pi2display`](https://github.com/REPLACE_ME/aa_pi2display) project
+`aa_pi2display` (a local sibling project, not yet published) project
 used successfully throughout its own reverse-engineering.
 
 You'll need [`aa-proxy-rs`](https://github.com/aa-proxy/aa-proxy-rs)

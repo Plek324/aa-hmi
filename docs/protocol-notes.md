@@ -5,7 +5,7 @@ This is the writeup of the Bluetooth-side protocol `aa-hmi` speaks — the
 credentials over classic Bluetooth RFCOMM, before any WiFi/TCP connection
 exists at all. It's a much smaller protocol than the actual Android Auto
 video session (see the sibling project,
-[aa_pi2display](https://github.com/REPLACE_ME/aa_pi2display), for that).
+`aa_pi2display` (a local sibling project, not yet published), for that).
 
 ## Where this comes from
 

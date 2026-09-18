@@ -28,8 +28,7 @@ dev = ["pytest>=7"]
 aa-hmi = "aa_hmi.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/REPLACE_ME/aa-hmi"
-"Related project" = "https://github.com/REPLACE_ME/aa_pi2display"
+Homepage = "https://github.com/Plek324/aa-hmi"
 
 [tool.setuptools.packages.find]
 where = ["src"]
