@@ -1,0 +1,73 @@
+from aa_hmi.cli import build_parser, main
+
+
+def _fake_cmd(record, key="ok"):
+    def fn(args):
+        record[key] = True
+        return 0
+    return fn
+
+
+def test_run_is_the_default_subcommand():
+    parser = build_parser()
+    args = parser.parse_args(["run"])
+    assert args.command == "run"
+    assert args.rescan is False
+
+
+def test_bare_invocation_defaults_to_run(monkeypatch):
+    called = {}
+    monkeypatch.setattr("aa_hmi.cli.cmd_run", _fake_cmd(called))
+    rc = main([])
+    assert rc == 0
+    assert called.get("ok") is True
+
+
+def test_flags_parse_onto_run_namespace():
+    parser = build_parser()
+    args = parser.parse_args([
+        "run", "--rescan", "--device", "AA:BB:CC:DD:EE:FF", "--channel", "4",
+        "--non-interactive", "--no-wifi-connect", "--json",
+        "--radio-coexistence-workaround", "--wifi-iface", "wlan0",
+        "--bt-timeout", "60", "-v",
+    ])
+    assert args.rescan is True
+    assert args.device == "AA:BB:CC:DD:EE:FF"
+    assert args.channel == 4
+    assert args.non_interactive is True
+    assert args.no_wifi_connect is True
+    assert args.json is True
+    assert args.radio_coexistence_workaround is True
+    assert args.wifi_iface == "wlan0"
+    assert args.bt_timeout == 60.0
+    assert args.verbose is True
+
+
+def test_list_subcommand_parses():
+    parser = build_parser()
+    args = parser.parse_args(["list"])
+    assert args.command == "list"
+
+
+def test_forget_subcommand_parses():
+    parser = build_parser()
+    args = parser.parse_args(["forget", "TF811BT", "--all"])
+    assert args.command == "forget"
+    assert args.mac_or_name == "TF811BT"
+    assert args.all is True
+
+
+def test_main_dispatches_to_list(monkeypatch):
+    called = {}
+    monkeypatch.setattr("aa_hmi.cli.cmd_list", _fake_cmd(called))
+    rc = main(["list"])
+    assert rc == 0
+    assert called.get("ok") is True
+
+
+def test_main_dispatches_to_forget(monkeypatch):
+    called = {}
+    monkeypatch.setattr("aa_hmi.cli.cmd_forget", _fake_cmd(called))
+    rc = main(["forget", "--all"])
+    assert rc == 0
+    assert called.get("ok") is True

@@ -1,0 +1,7 @@
+# Real WifiInfoResponse payload captured from a TF811BT display, via
+# aa-proxy-rs's debug=true ProxyFrameSniffer. Decoded and documented in the
+# aa_pi2display sibling project's extracting-wifi-credentials.md.
+# Expected decode: ssid=TF811-1c64201a key=12345678 bssid=68:8f:c9:b3:24:37
+# security_mode_raw=5 (NOT a valid SecurityMode enum value -- deliberate)
+# access_point_type_raw=None (field absent from the real response)
+0a0e54463831312d3163363432303161120831323334353637381a1136383a38663a63393a62333a32343a33372005

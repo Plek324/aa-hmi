@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aa-hmi"
+version = "0.1.0"
+description = "Scan, pair, and pull WiFi credentials from an AA-Wireless-style Bluetooth head unit, then join its WiFi network"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "aa-hmi contributors" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+aa-hmi = "aa_hmi.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/REPLACE_ME/aa-hmi"
+"Related project" = "https://github.com/REPLACE_ME/aa_pi2display"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

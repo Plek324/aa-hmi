@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+*.log
+
+# Real capture output from docs/capturing-ground-truth.md workflow, if run
+# locally and not yet cleaned up into tests/fixtures/ on purpose
+/tmp_captures/
