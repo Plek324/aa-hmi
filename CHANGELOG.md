@@ -41,3 +41,14 @@ Initial release.
   package lives under `src/` and wasn't on `PYTHONPATH`. Now documents a
   `pipx`/venv install and `PYTHONPATH=src python3 -m aa_hmi run`, both
   verified working on a real Raspberry Pi from a fresh clone.
+- `sudo aa-hmi` reported as still not working after the above: turned out
+  to be two more real issues, both confirmed live and now fixed/documented:
+  a `pipx` install puts `aa-hmi` in `~/.local/bin`, which isn't on
+  `sudo`'s `secure_path` (`sudo aa-hmi` → "command not found" — use `sudo
+  $(command -v aa-hmi)` instead); and, more importantly, the underlying
+  polkit "Not authorized" issue has a proper permanent fix that avoids
+  needing `sudo` at all — a one-time local polkit rule, documented with
+  exact commands in the new `docs/networkmanager-permissions.md` and
+  verified live (real `nmcli` WiFi connect succeeding as a plain user
+  over SSH, no `sudo`, immediately after adding the rule). `errors.py`'s
+  `HINT_NMCLI_NOT_AUTHORIZED` now points here first.

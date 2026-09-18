@@ -67,16 +67,20 @@ HINT_FLAKY_CLASSIC_BT = (
 # networking" is a polkit permissions issue, not a bug -- a plain SSH
 # session (no active console/logind session) doesn't get NetworkManager's
 # default allow-without-auth policy on some distros, even though the same
-# user's read-only nmcli calls (device/list) work fine. `sudo nmcli ...`
-# from the exact same session succeeded immediately.
+# user's read-only nmcli calls (device/list) work fine. A one-time polkit
+# rule fixes this permanently -- see docs/networkmanager-permissions.md
+# (also confirmed live: `sudo aa-hmi` alone isn't a full fix either, if
+# installed via pipx -- `~/.local/bin` isn't on sudo's secure_path).
 HINT_NMCLI_NOT_AUTHORIZED = (
     "nmcli refused to create/activate this WiFi connection ('Not "
     "authorized to control networking'). This is a polkit permissions "
-    "issue, not a bug -- some setups (e.g. a plain SSH session with no "
-    "active console/logind session) don't get NetworkManager's default "
-    "allow-without-auth policy, even though read-only nmcli commands "
-    "still work fine. Fix: run aa-hmi with sudo, or grant your user the "
-    "org.freedesktop.NetworkManager.network-control polkit action."
+    "issue, not a bug -- a plain SSH session (no active console/logind "
+    "session) doesn't get NetworkManager's default allow-without-auth "
+    "policy on some distros. Permanent fix (one-time, ~30s): see "
+    "docs/networkmanager-permissions.md. Quick alternative: "
+    "'sudo $(command -v aa-hmi) run' (plain 'sudo aa-hmi' won't find the "
+    "command if you installed via pipx, since ~/.local/bin isn't on "
+    "sudo's PATH)."
 )
 
 # errno values seen in practice against flaky classic-BT head units

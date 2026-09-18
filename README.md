@@ -213,9 +213,11 @@ hardware may behave differently, but these are worth knowing about:
   session with no active console/logind session doesn't get
   NetworkManager's default allow-without-auth policy on some distros,
   even though read-only nmcli commands (like listing WiFi networks) work
-  fine from the same session. Run `aa-hmi` with `sudo`, or grant your
-  user the `org.freedesktop.NetworkManager.network-control` polkit
-  action.
+  fine from the same session. **Recommended fix (one-time, ~30s, no more
+  `sudo` needed afterward):** [`docs/networkmanager-permissions.md`](docs/networkmanager-permissions.md).
+  Quick alternative: `sudo $(command -v aa-hmi) run` — plain `sudo
+  aa-hmi` won't find the command if you installed via `pipx`, since
+  `~/.local/bin` isn't on `sudo`'s `secure_path` (confirmed live too).
 - **"no RFCOMM channel ... spoke the expected protocol"**: either the
   head unit isn't actually an AA-Wireless-style device, or its RFCOMM
   channel assignment doesn't match what `aa-hmi` expects (channel numbers
