@@ -233,39 +233,49 @@ before assuming it's ordinary flakiness or reaching for a full head-unit
 power cycle — the adapter reset above is faster and non-disruptive to the
 head unit itself.
 
-## Troubleshooting: the head unit's own AP going fully unresponsive under rapid reconnect cycling
+## Troubleshooting: full unresponsiveness after rapid reconnect cycling — root cause still unconfirmed
 
-Found live (2026-09-22), distinct from the RFCOMM-layer issue above.
-After many rapid full `aa-hmi serve` start/stop cycles in quick
-succession (testing a fix -- see the WiFi-cleanup-on-shutdown fix in
-CHANGELOG.md), the Bluetooth/RFCOMM bootstrap kept succeeding on every
-single attempt (real `WifiInfoResponse` decoded, real WiFi association,
-real DHCP lease every time) but the subsequent TCP connect to port 29880
-consistently **timed out** (not refused -- timed out, ~10s, no SYN-ACK
-and no RST). `ping` to the head unit's own gateway IP
-(`192.168.10.1`) during this state showed **100% packet loss** — the
-head unit's own hosted AP/network stack had stopped responding to
-anything at the IP layer at all, despite the Pi successfully associating
-to its WiFi and getting an IP via DHCP from it, and despite its
-Bluetooth/RFCOMM service continuing to respond normally the entire time.
+Found live (2026-09-22) after many rapid full `aa-hmi serve` start/stop
+cycles in quick succession (testing a fix -- see CHANGELOG.md). The
+Bluetooth/RFCOMM bootstrap kept succeeding on every single attempt (real
+`WifiInfoResponse` decoded, real WiFi association, real DHCP lease every
+time) but the subsequent TCP connect to port 29880 consistently **timed
+out** (not refused — timed out, ~10s, no SYN-ACK and no RST). `ping` to
+the head unit's own gateway IP (`192.168.10.1`) during this state showed
+**100% packet loss**.
 
-This is not an `aa-hmi` bug — the RFCOMM/WiFi/DHCP layers all kept
-working correctly on every single attempt; the head unit's own IP stack
-was the thing that stopped responding, and no amount of retrying from the
-client side can fix that. Recovery needs a **head unit power cycle**
-(same fallback already documented in `aa_pi2display`'s README for a
-stuck-screen scenario) — this is now known to also apply here, for AP
-unresponsiveness, not just a frozen video frame.
+**Original hypothesis (now contradicted by further testing): a head unit
+power cycle would fix it.** A user hit this independently the same day,
+tried power-cycling the head unit first — **that alone did not fix it.**
+Power-cycling the **Raspberry Pi** did. This points at the Pi's own
+WiFi/Bluetooth combo-chip driver/firmware state (`brcmfmac`/`hci_uart`/
+`btbcm`, see `lsmod`) as the more likely culprit, not the head unit's own
+AP — but this still isn't confirmed with real evidence, because the
+Pi's `journalctl` was not configured for persistent storage at the time
+(`Storage=` unset in `/etc/systemd/journald.conf`, defaulting to volatile
+runtime-only logs), so whatever was actually logged during the bad state
+was lost the moment the Pi rebooted to fix it. **Now fixed** (persistent
+logging enabled, `Storage=persistent`) — if this happens again,
+`journalctl --list-boots` should show the previous boot, and
+`journalctl -b -1` can actually be inspected for `brcmfmac`/`hci_uart`/
+`bluetooth`/`NetworkManager` errors around the time it started.
+
+**What's still genuinely unknown**: whether a lighter-weight recovery
+(e.g. `sudo rfkill list` for a soft-blocked radio, or reloading the
+driver: `sudo modprobe -r brcmfmac && sudo modprobe brcmfmac`) would have
+worked instead of a full Pi reboot — untested, since deliberately
+re-breaking a working display to test recovery methods isn't worth the
+hardware wear and user disruption. Worth trying *before* a full reboot
+next time this happens, now that there's a chance to actually capture
+logs from the attempt either way.
 
 **Practical implication**: don't rapid-cycle `aa-hmi serve` start/stop
 many times in a short window against real hardware while testing/developing
-against it — this unit's firmware does not appear robust against that,
-and it's slow enough to recover (or needs a manual power cycle) that it
-will look like a real regression in whatever change you were actually
-testing. `daemon.py`'s own reconnect backoff (capped at 30s) is the right
-behavior for a display that's still working but transiently unhappy;
-it can't help if the display's own AP has actually gone unresponsive --
-watch for a `TimeoutError` specifically at the "connecting to
-`<ip>:29880`" log line (vs. `ConnectionRefusedError`, which means
-something else -- see the confirmed-arming-requirements section above)
-as the signal to stop retrying and check the head unit itself.
+— whatever this is, it's real and reproducible under that load.
+`daemon.py`'s own reconnect backoff (capped at 30s) is the right behavior
+for a display that's still working but transiently unhappy; it can't
+help if the underlying radio/driver state has actually wedged — watch
+for a `TimeoutError` specifically at the "connecting to `<ip>:29880`"
+log line (vs. `ConnectionRefusedError`, which means something else — see
+the confirmed-arming-requirements section above) as the signal to stop
+retrying and investigate, rather than waiting it out indefinitely.

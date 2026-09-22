@@ -25,13 +25,21 @@ Two more real bugs found live (2026-09-22), reported by a user testing
   live: starting `serve` with WiFi already stuck connected from a prior
   run (the exact reported failure) now self-heals automatically with no
   manual cleanup.
-- **New finding, documented, not a code fix**: while testing the above
-  fixes with many rapid `aa-hmi serve` start/stop cycles in quick
-  succession, the head unit's own hosted WiFi AP stopped responding at
-  the IP layer entirely (100% ping loss to its gateway address) even
-  though its Bluetooth/RFCOMM bootstrap kept succeeding on every single
-  attempt. Not an `aa-hmi` bug -- recovery needs a head unit power cycle.
-  See `docs/video-protocol-notes.md`'s new troubleshooting section: don't
+- **New finding, documented, root cause still unconfirmed**: while
+  testing the above fixes with many rapid `aa-hmi serve` start/stop
+  cycles in quick succession, something went fully unresponsive at the
+  IP layer (100% ping loss to the head unit's gateway address) even
+  though Bluetooth/RFCOMM bootstrap kept succeeding on every single
+  attempt. Originally guessed to be the head unit's own AP wedging --
+  **contradicted the same day**: a user hit this independently, a head
+  unit power cycle did NOT fix it, a Raspberry Pi reboot did. Points at
+  the Pi's own combo-chip driver/radio state more than the head unit.
+  Root cause still not nailed down -- the Pi's `journalctl` wasn't
+  configured for persistent storage, so the evidence from the bad state
+  was lost on reboot; now fixed (`Storage=persistent` in
+  `/etc/systemd/journald.conf`, a Pi-side config change, not part of this
+  repo) so a future occurrence can actually be diagnosed. See
+  `docs/video-protocol-notes.md`'s troubleshooting section: don't
   rapid-cycle `serve` against real hardware while developing/testing.
 
 ## 0.2.0

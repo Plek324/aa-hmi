@@ -316,13 +316,16 @@ but these are worth knowing about:
   default for `serve` (its own reconnect loop hits this on every drop,
   not just once), opt-in for `run`, since it's specific to certain client
   hardware, not universal.
-- **The head unit's own WiFi AP can become fully unresponsive** (not just
-  Bluetooth) if reconnected to very rapidly, many times in quick
-  succession — confirmed by `ping`ing its gateway address returning 100%
-  packet loss while its Bluetooth/RFCOMM service kept responding
-  normally. Not something `aa-hmi` can fix in software; needs a head unit
-  power cycle to recover. Don't rapid-cycle `aa-hmi serve` start/stop
-  against real hardware while testing/developing. See
+- **Something can wedge fully unresponsive after rapid reconnect
+  cycling** — confirmed by `ping`ing the head unit's gateway address
+  returning 100% packet loss while its Bluetooth/RFCOMM service kept
+  responding normally. **Root cause still unconfirmed**: a head unit
+  power cycle alone did *not* fix it for one user; a Raspberry Pi reboot
+  did — points at the Pi's own combo-chip driver/radio state more than
+  the head unit's AP, but isn't nailed down yet (persistent logging is
+  now enabled so a future occurrence can actually be diagnosed). Don't
+  rapid-cycle `aa-hmi serve` start/stop against real hardware while
+  testing/developing. See
   [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 - **The credential cache stores your WiFi password in plaintext** (with
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
