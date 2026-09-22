@@ -49,6 +49,19 @@ def build_parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="run the full display-server daemon")
     _add_bootstrap_args(serve)
     serve.set_defaults(non_interactive=True)  # an unattended daemon must never block on input()
+    # On by default for `serve` specifically (off for `run`): serve's own
+    # reconnect loop redoes the full Bluetooth bootstrap on every drop, so
+    # WiFi/BT radio contention on combo-chip hardware would otherwise
+    # recur on every single reconnect, not just a one-off. Also the more
+    # robust half of the fix for a real bug found live (2026-09-22):
+    # leftover WiFi state (Ctrl+C not cleaning up, a crash, a stale
+    # connection from any other cause) blocking the next start's
+    # Bluetooth step -- this makes every bootstrap attempt defensively
+    # clear WiFi first regardless of how we got into that state, not just
+    # when the *previous* run happened to shut down gracefully. Use
+    # --no-radio-coexistence-workaround to opt back out (e.g. non-combo-chip
+    # hardware where it's pure overhead).
+    serve.set_defaults(radio_coexistence_workaround=True)
     serve.add_argument("--socket-path", metavar="PATH", help="IPC socket location (default: $XDG_RUNTIME_DIR/aa-hmi/video.sock)")
     serve.add_argument("--display-ip", default="192.168.10.1", help="display's IP on its own WiFi AP (default: 192.168.10.1)")
     serve.add_argument("--cert", metavar="PATH", help="TLS cert path (default: auto-generated under --config-dir)")
@@ -80,8 +93,9 @@ def _add_bootstrap_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--device", metavar="MAC", help="target a specific device (must be cached, or combine with --channel)")
     sp.add_argument("--channel", type=int, metavar="N", help="force an RFCOMM channel, skip discovery")
     sp.add_argument("--non-interactive", action="store_true", help="never prompt; fail if no usable cached device")
-    sp.add_argument("--radio-coexistence-workaround", action="store_true",
-                     help="disconnect WiFi before the Bluetooth step, for combo-chip hardware that can't use both radios at once (e.g. Raspberry Pi's onboard BCM4345C0)")
+    sp.add_argument("--radio-coexistence-workaround", action=argparse.BooleanOptionalAction, default=False,
+                     help="disconnect WiFi before the Bluetooth step, for combo-chip hardware that can't use both radios at once (e.g. Raspberry Pi's onboard BCM4345C0). "
+                          "Default off for `run`, on for `serve` (--no-radio-coexistence-workaround to disable there)")
     sp.add_argument("--wifi-iface", metavar="IFACE", help="WiFi interface to use (default: autodetect)")
     sp.add_argument("--bt-timeout", type=float, default=90.0, metavar="SECONDS",
                      help="total time budget for Bluetooth-stage retries (default: 90)")

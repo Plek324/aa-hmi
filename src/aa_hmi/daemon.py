@@ -18,6 +18,11 @@ if a lighter-weight reconnect would have worked. The IPC server itself is
 NOT torn down on a video-session drop -- a connected client keeps its
 socket; frames sent during the reconnect window are just dropped (with a
 rate-limited log) rather than erroring the client's connection.
+
+Final shutdown (Ctrl+C / SIGTERM, not an automatic reconnect cycle) also
+disconnects and forgets the display's WiFi network -- see
+_disconnect_wifi_on_shutdown's docstring for why this matters (found
+live, 2026-09-22: skipping it broke the next `aa-hmi serve` start).
 """
 from __future__ import annotations
 
@@ -52,6 +57,7 @@ class _SessionHolder:
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
         self.frame_counter = 0
         self.reconnect_count = 0
+        self.last_ssid: str | None = None  # for run_daemon's final-shutdown WiFi cleanup
         self._last_drop_log = 0.0
 
     def close_session(self) -> None:
@@ -143,6 +149,7 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
             last_seen=cache.now_iso(), last_success=cache.now_iso(),
         )
         wifi.connect(info.ssid, info.key, iface=args.wifi_iface)
+        holder.last_ssid = info.ssid  # so run_daemon's final shutdown can disconnect/forget it
 
     cert.ensure_cert(cert_file, key_file)
 
@@ -160,6 +167,34 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
     holder.rfcomm_sock = rfcomm_sock
     holder.frame_counter = 0
     return session
+
+
+def _disconnect_wifi_on_shutdown(args, holder: _SessionHolder) -> None:
+    """Only called once, on run_daemon's actual final exit (not between
+    automatic reconnect cycles, which should stay connected) -- mirrors
+    aa_pi2display's run_session.sh, which always disconnected AND forgot
+    the display's WiFi network on its way out. daemon.py had been
+    skipping this entirely (an oversight, not a deliberate choice):
+    reported live (2026-09-22) that Ctrl+C left the Pi connected to the
+    display's AP, and restarting `aa-hmi serve` then failed to
+    reconnect -- almost certainly the documented WiFi/Bluetooth
+    radio-coexistence issue on the Pi's onboard combo chip (active WiFi
+    starves outbound Bluetooth), since the next run's Bluetooth bootstrap
+    has no way to know it should disconnect WiFi first unless
+    --radio-coexistence-workaround happens to be set. Disconnecting (and
+    forgetting the stale connection profile, same rationale as
+    wifi.delete_stale_profile) here means every `aa-hmi serve` start
+    behaves the same regardless of how the previous run ended.
+    Best-effort: logged, never allowed to raise past this point -- a
+    failure to clean up WiFi must never mask a real shutdown."""
+    if holder.last_ssid is None:
+        return
+    try:
+        wifi.disconnect(args.wifi_iface)
+        wifi.forget(holder.last_ssid)
+        log(f"disconnected and forgot WiFi network {holder.last_ssid!r} on the way out")
+    except Exception as e:  # noqa: BLE001 -- best-effort cleanup, must never mask a real shutdown
+        log(f"WiFi cleanup on shutdown failed (continuing anyway): {type(e).__name__}: {e}")
 
 
 def _wait_until_dropped_or_stopped(session: VideoSession, stop_event: threading.Event,
@@ -224,4 +259,5 @@ def run_daemon(args) -> int:
     finally:
         ipc_server.stop()
         holder.close_session()
+        _disconnect_wifi_on_shutdown(args, holder)
     return 0

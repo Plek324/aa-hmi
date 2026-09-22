@@ -1,6 +1,40 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## Unreleased (since 0.2.0)
+
+Two more real bugs found live (2026-09-22), reported by a user testing
+`aa-hmi serve` with `examples/clock.py`:
+
+- **`Ctrl+C` left the Pi connected to the display's WiFi**, breaking the
+  *next* `aa-hmi serve` start (the documented WiFi/Bluetooth
+  radio-coexistence issue on the Pi's onboard combo chip -- active WiFi
+  starves outbound Bluetooth). `daemon.py` now disconnects and forgets
+  the display's WiFi connection on final shutdown (Ctrl+C/SIGTERM, not
+  between automatic reconnect cycles) -- mirrors `aa_pi2display`'s
+  original `run_session.sh`, which always did this and `daemon.py` had
+  simply never picked up.
+- **More robust fix for the same underlying issue, regardless of cause**:
+  `--radio-coexistence-workaround` now defaults to **on** for `aa-hmi
+  serve` specifically (still off for `aa-hmi run`, via the new
+  `--no-radio-coexistence-workaround` opt-out). `serve`'s own reconnect
+  loop redoes the full Bluetooth bootstrap on every drop, so without
+  this, radio contention would recur on every single reconnect, not just
+  after a graceful-shutdown edge case -- and it also protects against
+  leftover WiFi state from any cause (a crash, `kill -9`, not just a
+  normal Ctrl+C), not only the specific case just fixed above. Verified
+  live: starting `serve` with WiFi already stuck connected from a prior
+  run (the exact reported failure) now self-heals automatically with no
+  manual cleanup.
+- **New finding, documented, not a code fix**: while testing the above
+  fixes with many rapid `aa-hmi serve` start/stop cycles in quick
+  succession, the head unit's own hosted WiFi AP stopped responding at
+  the IP layer entirely (100% ping loss to its gateway address) even
+  though its Bluetooth/RFCOMM bootstrap kept succeeding on every single
+  attempt. Not an `aa-hmi` bug -- recovery needs a head unit power cycle.
+  See `docs/video-protocol-notes.md`'s new troubleshooting section: don't
+  rapid-cycle `serve` against real hardware while developing/testing.
+
+## 0.2.0
 
 Daemon mode: `aa-hmi serve` — the full display-server piece, on top of
 0.1.0's Bluetooth/WiFi bootstrap. This is what turns `aa-hmi` into a

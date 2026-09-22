@@ -206,10 +206,11 @@ aa-hmi run [options]        # scan/pair/bootstrap/connect (default command)
   --non-interactive          never prompt; fail if no usable cached device
   --no-wifi-connect          stop after the handshake; print credentials only
   --json                     machine-readable result on stdout
-  --radio-coexistence-workaround
+  --radio-coexistence-workaround / --no-radio-coexistence-workaround
                               disconnect WiFi before the BT step (for combo
                               WiFi+BT chips that can't use both at once,
-                              e.g. the Raspberry Pi's onboard BCM4345C0)
+                              e.g. the Raspberry Pi's onboard BCM4345C0).
+                              Default: off for run, ON for serve (see below)
   --wifi-iface IFACE         WiFi interface to use (default: autodetect)
   --bt-timeout SECONDS       total retry budget for the Bluetooth stage (default: 90)
   --scan-duration SECONDS    BT scan duration (default: 10)
@@ -219,6 +220,9 @@ aa-hmi run [options]        # scan/pair/bootstrap/connect (default command)
 aa-hmi serve [options]      # full daemon: bootstrap + hold display session + serve IPC
   (all of `run`'s bootstrap flags above, EXCEPT --no-wifi-connect/--json, plus:)
   --non-interactive           defaults to true for serve (unlike run)
+  --radio-coexistence-workaround defaults to true for serve too (unlike run) --
+                              serve's reconnect loop redoes the full BT bootstrap
+                              on every drop, so this matters every time, not just once
   --socket-path PATH         IPC socket location (default: $XDG_RUNTIME_DIR/aa-hmi/video.sock)
   --display-ip IP            display's IP on its own WiFi AP (default: 192.168.10.1)
   --cert PATH, --key PATH    TLS cert/key paths (default: auto-generated under --config-dir)
@@ -308,8 +312,18 @@ but these are worth knowing about:
 - **WiFi/Bluetooth radio coexistence** on some client hardware (e.g. the
   Raspberry Pi's onboard combo chip) — active WiFi can starve outbound
   Bluetooth connectivity entirely. `--radio-coexistence-workaround`
-  disconnects WiFi before the Bluetooth step as a workaround; it's opt-in
-  since it's specific to certain client hardware, not universal.
+  disconnects WiFi before the Bluetooth step as a workaround — on by
+  default for `serve` (its own reconnect loop hits this on every drop,
+  not just once), opt-in for `run`, since it's specific to certain client
+  hardware, not universal.
+- **The head unit's own WiFi AP can become fully unresponsive** (not just
+  Bluetooth) if reconnected to very rapidly, many times in quick
+  succession — confirmed by `ping`ing its gateway address returning 100%
+  packet loss while its Bluetooth/RFCOMM service kept responding
+  normally. Not something `aa-hmi` can fix in software; needs a head unit
+  power cycle to recover. Don't rapid-cycle `aa-hmi serve` start/stop
+  against real hardware while testing/developing. See
+  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 - **The credential cache stores your WiFi password in plaintext** (with
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
   (usually `~/.config/aa-hmi/devices.json`). It's a local convenience

@@ -5,10 +5,17 @@ Bluetooth connectivity entirely (l2ping reliably failing with "Host is
 down" while WiFi-connected, working immediately on disconnect -- see
 aa_pi2display's README "Known quirks").
 
-This is opt-in (--radio-coexistence-workaround), off by default, since
-it's specific to certain client hardware, not universal, and
-unconditionally disconnecting the caller's WiFi would be a surprising
-thing for a general-purpose tool to do without being asked.
+Controlled by --radio-coexistence-workaround / --no-radio-coexistence-workaround.
+Off by default for `aa-hmi run` (a one-shot credential fetch -- this is
+specific to certain client hardware, not universal, and unconditionally
+disconnecting the caller's WiFi would be a surprising thing for a
+general-purpose tool to do without being asked). **On by default for
+`aa-hmi serve`**: its reconnect loop redoes the full Bluetooth bootstrap
+on every drop, so radio contention would otherwise recur on every single
+reconnect, and defensively clearing WiFi before each attempt also
+protects against leftover WiFi state from any cause (a previous run's
+Ctrl+C, a crash) blocking the next Bluetooth step -- found to matter live
+(2026-09-22). See cli.py's `build_parser` for where that default is set.
 """
 from __future__ import annotations
 

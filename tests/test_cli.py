@@ -138,6 +138,29 @@ def test_serve_defaults_to_non_interactive():
     assert args.non_interactive is True
 
 
+def test_run_defaults_radio_coexistence_workaround_off():
+    parser = build_parser()
+    args = parser.parse_args(["run"])
+    assert args.radio_coexistence_workaround is False
+
+
+def test_serve_defaults_radio_coexistence_workaround_on():
+    """Regression test for a real bug found live (2026-09-22): serve's
+    own reconnect loop redoes the full BT bootstrap on every drop, so
+    without this defaulting on, WiFi/BT radio contention (and leftover
+    WiFi state from any prior run, graceful or not) would keep breaking
+    reconnects. `run` intentionally keeps the old opt-in default."""
+    parser = build_parser()
+    args = parser.parse_args(["serve"])
+    assert args.radio_coexistence_workaround is True
+
+
+def test_serve_radio_coexistence_workaround_can_be_disabled_explicitly():
+    parser = build_parser()
+    args = parser.parse_args(["serve", "--no-radio-coexistence-workaround"])
+    assert args.radio_coexistence_workaround is False
+
+
 def test_serve_is_in_default_subcommand_dispatch_list():
     """`aa-hmi serve ...` must not get an implicit `run` prepended the
     way a bare `aa-hmi -v` does."""
