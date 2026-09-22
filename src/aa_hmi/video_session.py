@@ -62,6 +62,7 @@ class VideoSession:
         self._reader_thread: threading.Thread | None = None
         self._stop_reader = threading.Event()
         self._on_touch_raw: TouchCallback | None = None
+        self._last_activity: float = 0.0  # time.monotonic() of the last frame RECEIVED from the display
 
     # --- connect + handshake (synchronous, no reader thread yet) ---
 
@@ -97,6 +98,7 @@ class VideoSession:
         log("<- AuthComplete")
 
         self._stop_reader.clear()
+        self._last_activity = time.monotonic()  # start the liveness clock from here, not object construction
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True, name="video-session-reader")
         self._reader_thread.start()
 
@@ -196,15 +198,45 @@ class VideoSession:
         if self.state != VideoSessionState.OPEN:
             raise VideoSessionError(f"video session is not open (state={self.state})")
 
-    def is_alive(self) -> bool:
+    def is_alive(self, *, liveness_timeout: float | None = None) -> bool:
         """True if the session believes it's open AND its background
         reader thread is still actually running -- a daemon's reconnect
         loop should poll this rather than just trusting `state`, since
         the reader thread can exit (connection dropped) without anything
-        else having noticed yet."""
-        return (self.state == VideoSessionState.OPEN
-                and self._reader_thread is not None
-                and self._reader_thread.is_alive())
+        else having noticed yet.
+
+        liveness_timeout, if given, ALSO requires that the display has
+        sent us something -- anything, an ACK, a status indication, not
+        necessarily a touch event -- within that many seconds. Found live
+        (2026-09-22) to matter: the display's own video decoder can
+        apparently wedge silently while the underlying TCP/TLS connection
+        stays completely healthy from our side -- every send_frame() call
+        keeps succeeding (the OS happily accepts the bytes into its send
+        buffer; nothing on our end ever sees an error), but the display
+        stops updating and, evidently, stops sending anything back too.
+        Without this check, `is_alive()` (and thus the daemon's reconnect
+        watchdog) had no way to ever notice -- "aa-hmi keeps printing
+        sent frame messages, totally unaware something is off," reported
+        verbatim. Root cause on the display's side is NOT confirmed (see
+        docs/video-protocol-notes.md for the leading hypothesis); this is
+        a symptom-level mitigation that lets the daemon's already-proven
+        full-reconnect logic recover automatically instead of the display
+        staying frozen indefinitely until someone notices and manually
+        restarts `aa-hmi serve`. Omitted by default (None) so existing
+        callers that just want "is the transport still up" are unaffected."""
+        if self.state != VideoSessionState.OPEN:
+            return False
+        if self._reader_thread is None or not self._reader_thread.is_alive():
+            return False
+        if liveness_timeout is not None and (time.monotonic() - self._last_activity) > liveness_timeout:
+            return False
+        return True
+
+    def seconds_since_last_activity(self) -> float:
+        """How long since the display last sent us anything at all --
+        exposed mainly so callers can log a clear reason when
+        is_alive(liveness_timeout=...) trips."""
+        return time.monotonic() - self._last_activity
 
     # --- background reader ---
 
@@ -222,6 +254,7 @@ class VideoSession:
             if frame is None:
                 log("video session: connection closed by display")
                 return
+            self._last_activity = time.monotonic()
             channel, _flags, payload = frame
             try:
                 with self._tls_lock:

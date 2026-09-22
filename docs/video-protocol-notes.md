@@ -139,6 +139,79 @@ around, it may limit how usable a genuinely interactive touch UI can be
 on this specific hardware — worth confirming/investigating before relying
 on touch for anything beyond simple confirmation taps.
 
+## The display's video decoder can wedge silently under sustained live use — a real, confirmed failure mode
+
+Reported live (2026-09-22): running `examples/clock.py` at 5Hz, the
+display eventually just stops updating and stays frozen on the last
+frame — while `aa-hmi serve` keeps logging `sent frame #N to the
+display` continuously, with no errors, completely unaware anything is
+wrong. Restarting the *client* script doesn't help (the display stays
+frozen); only restarting `aa-hmi serve` itself fixes it. This was also
+seen at 1Hz, just took longer (over 5 minutes but under 15).
+
+**What this means, confirmed by the symptom itself**: the TCP/TLS writes
+are genuinely succeeding at the OS level (the Pi's kernel accepts every
+`send_frame()` call into its socket send buffer without error) — but the
+display's own decoder/renderer has stopped doing anything with what it
+receives. Its network stack evidently keeps ACKing at the TCP level (our
+sends never block or time out), but the AA video service on the display
+itself has wedged. This is very likely the same underlying class of issue
+as `aa_pi2display`'s old, never-root-caused "black screen" bug from
+continuous live rendering — this project's redesigned per-frame-ffmpeg
+architecture (see above) avoided the specific *causes* known from that
+investigation, but apparently not every way this display's decoder can
+get into trouble under sustained live content.
+
+**Leading hypothesis, NOT confirmed**: every frame is encoded by a fresh,
+independent `ffmpeg` invocation (see "Why per-frame ffmpeg invocation"
+above) — each one emits its own SPS/PPS (H.264 parameter sets) as if
+starting a brand new stream, rather than the single SPS/PPS a real
+continuous encoder session would emit once and reuse. At 5Hz that's ~5
+full parameter-set (re)inits per second sent to the display's decoder;
+plausible that repeating this many times eventually corrupts/exhausts
+something in the display's own decoder state, given the correlation
+(happens sooner at higher rates, not at all within a short static test).
+**Untested** — would need decoding and diffing the SPS/PPS bytes across
+consecutive per-frame `ffmpeg` invocations to even confirm they're
+identical or drifting, then experimentally stripping repeated SPS/PPS
+NALs after the first frame of a session to see if that changes anything.
+Flagged here as the next concrete thing to investigate, not implemented,
+since guessing wrong here risks making things worse without hardware
+access to verify against.
+
+### Mitigation implemented now: protocol-level liveness detection
+
+Rather than guess at the root cause, `VideoSession` now tracks when it
+last received *anything at all* from the display (an ACK, a status
+indication, doesn't matter what) and `is_alive(liveness_timeout=...)`
+fails if that's been too long — even though the transport itself (TCP
+connection, reader thread) looks completely healthy. `daemon.py`'s
+existing reconnect watchdog uses this (`--liveness-timeout`, default 60s,
+`0` disables it) — since the daemon's full-reconnect logic was already
+proven live to work correctly, this just gives it a way to actually
+*notice* the wedge and trigger it, instead of sitting frozen
+indefinitely until a human notices and manually restarts `aa-hmi serve`.
+
+This is a symptom-level mitigation, not a fix for whatever's actually
+wedging the display's decoder — but it directly closes the gap in the
+original report ("aa-hmi ... totally unaware something is off"), and
+doesn't require knowing the root cause to be effective.
+
+**Confirmed live (2026-09-22) — an important nuance**: the display does
+**not** send anything on its own when idle. Tested directly: opened a
+session, sent zero frames from any client, and the display stayed
+completely silent — no periodic heartbeat, no unprompted status traffic.
+With `--liveness-timeout 8` in that state, the daemon correctly detected
+"nothing in 9s" and reconnected right on schedule. This means
+`--liveness-timeout` isn't purely "did the display's decoder wedge" — it
+also fires if **the client itself** goes quiet for that long, since the
+display only seems to respond to activity, not tick on its own. For the
+1-frame-per-1–10s target use case this project was designed around, the
+default 60s window comfortably covers normal gaps between frames; a
+client with longer legitimate idle periods than that should either send
+occasional no-op frames to keep the session "busy," or raise
+`--liveness-timeout` accordingly.
+
 ## Confirmed: the Bluetooth link must stay OPEN through the TCP connect, not just have been used
 
 New finding while bringing up `aa-hmi serve` (2026-09-18), refining what

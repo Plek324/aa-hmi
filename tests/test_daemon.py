@@ -5,6 +5,7 @@ regression value: a user reported live (2026-09-22) that Ctrl+C left the
 Pi connected to the display's WiFi, breaking the next `aa-hmi serve`
 start (almost certainly the documented WiFi/Bluetooth radio-coexistence
 issue on the Pi's onboard combo chip)."""
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -62,3 +63,58 @@ def test_disconnect_wifi_on_shutdown_never_raises(monkeypatch, capsys):
 
 def test_holder_last_ssid_defaults_to_none():
     assert daemon._SessionHolder().last_ssid is None
+
+
+# --- _wait_until_dropped_or_stopped: liveness-timeout reconnect trigger ---
+#
+# Regression tests for a real bug reported live (2026-09-22): "aa-hmi
+# keeps printing sent frame messages, totally unaware something is off"
+# -- the display's video decoder wedged silently while the transport
+# stayed healthy, and the daemon had no way to notice. These test the
+# orchestration logic (when does it decide to return and trigger a
+# reconnect) against a mocked VideoSession, not the real liveness
+# tracking itself (that's video_session.py's own is_alive(), covered in
+# test_video_session.py).
+
+def _fake_session(*, alive_with_timeout: bool, alive_without_timeout: bool = True, seconds_idle: float = 999.0):
+    session = MagicMock()
+    session.is_alive.side_effect = lambda liveness_timeout=None: (
+        alive_with_timeout if liveness_timeout is not None else alive_without_timeout
+    )
+    session.seconds_since_last_activity.return_value = seconds_idle
+    return session
+
+
+def test_wait_returns_when_liveness_timeout_trips_even_though_transport_is_fine():
+    """The actual regression case: transport-level is_alive() is True,
+    but the display has gone quiet longer than the timeout -- must still
+    return (triggering a reconnect), not loop forever."""
+    session = _fake_session(alive_with_timeout=False, alive_without_timeout=True)
+    stop_event = threading.Event()
+
+    daemon._wait_until_dropped_or_stopped(session, stop_event, liveness_timeout=60.0, poll_interval=0.01)
+
+    assert not stop_event.is_set()  # returned because of the session, not because we were told to stop
+
+
+def test_wait_keeps_looping_while_alive_with_timeout_until_stopped():
+    session = _fake_session(alive_with_timeout=True)
+    stop_event = threading.Event()
+    threading.Timer(0.05, stop_event.set).start()
+
+    daemon._wait_until_dropped_or_stopped(session, stop_event, liveness_timeout=60.0, poll_interval=0.01)
+
+    assert stop_event.is_set()  # returned because we were told to stop, not a false reconnect
+
+
+def test_wait_with_liveness_timeout_none_behaves_like_transport_only_check():
+    """liveness_timeout=None (the --liveness-timeout 0 case) must not
+    trigger on a stale-but-otherwise-fine session -- only real transport
+    death should end the wait."""
+    session = _fake_session(alive_with_timeout=True, alive_without_timeout=True)
+    stop_event = threading.Event()
+    threading.Timer(0.05, stop_event.set).start()
+
+    daemon._wait_until_dropped_or_stopped(session, stop_event, liveness_timeout=None, poll_interval=0.01)
+
+    assert stop_event.is_set()

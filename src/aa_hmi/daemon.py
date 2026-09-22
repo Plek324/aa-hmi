@@ -198,10 +198,15 @@ def _disconnect_wifi_on_shutdown(args, holder: _SessionHolder) -> None:
 
 
 def _wait_until_dropped_or_stopped(session: VideoSession, stop_event: threading.Event,
-                                    poll_interval: float = 1.0) -> None:
+                                    liveness_timeout: float | None, poll_interval: float = 1.0) -> None:
     while not stop_event.is_set():
-        if not session.is_alive():
-            log("video session no longer alive, will reconnect")
+        if not session.is_alive(liveness_timeout=liveness_timeout):
+            if session.is_alive():  # transport-level fine, so it must be the liveness check that tripped
+                log(f"video session transport looks fine but the display hasn't sent anything in "
+                    f"{session.seconds_since_last_activity():.0f}s (>{liveness_timeout:.0f}s liveness timeout) -- "
+                    f"treating as wedged, will reconnect")
+            else:
+                log("video session no longer alive, will reconnect")
             return
         stop_event.wait(poll_interval)
 
@@ -237,7 +242,8 @@ def run_daemon(args) -> int:
                 consecutive_failures = 0
                 holder.reconnect_count += 1
                 log(f"=== display session established (connection #{holder.reconnect_count}), serving IPC ===")
-                _wait_until_dropped_or_stopped(session, stop_event)
+                liveness_timeout = args.liveness_timeout if args.liveness_timeout and args.liveness_timeout > 0 else None
+                _wait_until_dropped_or_stopped(session, stop_event, liveness_timeout)
             except RetryCancelledError:
                 # stop_event fired while a bootstrap attempt was retrying/backing
                 # off -- see retry.retry_with_backoff's cancel_event docstring.

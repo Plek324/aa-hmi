@@ -2,8 +2,22 @@
 
 ## Unreleased (since 0.2.0)
 
-Two more real bugs found live (2026-09-22), reported by a user testing
-`aa-hmi serve` with `examples/clock.py`:
+Several more real bugs found live (2026-09-22), reported by a user
+testing `aa-hmi serve` with `examples/clock.py`:
+
+- **The display's own video decoder can wedge silently under sustained
+  live use** (reported: frozen screen after 1-5Hz updates for several
+  minutes; `aa-hmi` kept logging successful sends throughout, completely
+  unaware anything was wrong -- only restarting `aa-hmi serve` itself
+  fixed it, not the client). Root cause unconfirmed (leading hypothesis:
+  repeated H.264 parameter-set reinitialization from the per-frame
+  `ffmpeg` encoding approach -- see `docs/video-protocol-notes.md`).
+  Mitigated with protocol-level liveness detection:
+  `VideoSession.is_alive(liveness_timeout=...)` now also fails if the
+  display hasn't sent anything at all (not just video-unrelated traffic
+  like ACKs) within that window, even though the transport itself looks
+  perfectly healthy. `daemon.py`'s already-proven reconnect logic uses
+  this via the new `--liveness-timeout` flag (default 60s, `0` disables).
 
 - **`Ctrl+C` left the Pi connected to the display's WiFi**, breaking the
   *next* `aa-hmi serve` start (the documented WiFi/Bluetooth

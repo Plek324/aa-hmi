@@ -112,7 +112,7 @@ def test_serve_subcommand_parses_bootstrap_and_daemon_flags():
         "--radio-coexistence-workaround", "--wifi-iface", "wlan0", "--bt-timeout", "60",
         "--socket-path", "/tmp/x.sock", "--display-ip", "192.168.10.1",
         "--cert", "/tmp/c.pem", "--key", "/tmp/k.pem",
-        "--persistent-session", "--reconnect-max-attempts", "10", "-v",
+        "--persistent-session", "--reconnect-max-attempts", "10", "--liveness-timeout", "45", "-v",
     ])
     assert args.command == "serve"
     assert args.device == "AA:BB:CC:DD:EE:FF"
@@ -127,7 +127,14 @@ def test_serve_subcommand_parses_bootstrap_and_daemon_flags():
     assert args.key == "/tmp/k.pem"
     assert args.persistent_session is True
     assert args.reconnect_max_attempts == 10
+    assert args.liveness_timeout == 45.0
     assert args.verbose is True
+
+
+def test_serve_liveness_timeout_defaults_to_60():
+    parser = build_parser()
+    args = parser.parse_args(["serve"])
+    assert args.liveness_timeout == 60.0
 
 
 def test_serve_defaults_to_non_interactive():

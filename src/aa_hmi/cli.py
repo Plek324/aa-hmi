@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "re-arming as simply routine")
     serve.add_argument("--reconnect-max-attempts", type=int, default=None,
                         help="give up after this many consecutive reconnect failures (default: retry forever)")
+    serve.add_argument("--liveness-timeout", type=float, default=60.0, metavar="SECONDS",
+                        help="reconnect if the display sends nothing at all (not even an ACK) for this long, "
+                             "even though the connection otherwise looks fine -- the display's own video decoder "
+                             "has been observed to wedge silently under sustained use (see "
+                             "docs/video-protocol-notes.md); 0 disables this check (default: 60)")
     serve.add_argument("-v", "--verbose", action="store_true")
 
     lst = sub.add_parser("list", help="show cached devices")
