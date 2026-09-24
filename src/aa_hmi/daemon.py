@@ -52,10 +52,17 @@ class _SessionHolder:
     VideoSession is current, across reconnects, without re-registering a
     new callback each time."""
 
-    def __init__(self):
+    def __init__(self, timestamp_mode: str = "elapsed"):
         self.session: VideoSession | None = None
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
-        self.frame_counter = 0
+        self.frame_counter = 0   # access units (slices) sent this session
+        self.image_counter = 0   # client images sent this session
+        self.session_start = 0.0  # time.monotonic() when the current session opened
+        # "elapsed": every slice of one image gets the same timestamp =
+        # real microseconds since the session opened. "per-slice": the
+        # original behavior, +33333us per slice regardless of real time --
+        # kept for A/B testing a freeze (see docs/video-protocol-notes.md).
+        self.timestamp_mode = timestamp_mode
         self.reconnect_count = 0
         self.last_ssid: str | None = None  # for run_daemon's final-shutdown WiFi cleanup
         self._last_drop_log = 0.0
@@ -76,6 +83,14 @@ class _SessionHolder:
                 pass
             self.rfcomm_sock = None
 
+    def image_timestamp(self) -> int:
+        """Microseconds since the current session opened -- still
+        stream-relative (the display has no RTC; epoch time is what broke
+        things originally), but tracking real elapsed time instead of a
+        fixed +33333us per slice, which drifted ~0.87s behind real time
+        per second at 1 image/s with 4 slices per image."""
+        return int((time.monotonic() - self.session_start) * 1_000_000)
+
     def on_frame(self, frame_msg: ipc_wire.FrameMsg) -> None:
         session = self.session
         if session is None or not session.is_alive():
@@ -86,11 +101,16 @@ class _SessionHolder:
             return
         try:
             access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
+            self.image_counter += 1
+            image_ts = self.image_timestamp()
+            ts = image_ts
             for au in access_units:
                 nal_bytes = encoder.assemble_nal_bytes(au)
                 self.frame_counter += 1
-                session.send_frame(nal_bytes, self.frame_counter * 33333)
-            log(f"  sent frame #{self.frame_counter} to the display ({len(access_units)} access unit(s))",
+                ts = image_ts if self.timestamp_mode == "elapsed" else self.frame_counter * 33333
+                session.send_frame(nal_bytes, ts)
+            log(f"  sent image #{self.image_counter} as {len(access_units)} slice(s), ts={ts}us "
+                f"(slices sent this session: {self.frame_counter})",
                 verbose_only=True, verbose=True)
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
             log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
@@ -166,6 +186,8 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
     holder.session = session
     holder.rfcomm_sock = rfcomm_sock
     holder.frame_counter = 0
+    holder.image_counter = 0
+    holder.session_start = time.monotonic()
     return session
 
 
@@ -241,7 +263,7 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    holder = _SessionHolder()
+    holder = _SessionHolder(timestamp_mode=getattr(args, "timestamp_mode", "elapsed"))
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
     ipc_server.start(on_frame=holder.on_frame)
 

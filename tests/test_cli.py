@@ -197,3 +197,9 @@ def test_cmd_serve_shows_polkit_hint_on_nmcli_not_authorized(monkeypatch, capsys
     assert rc == 1
     captured = capsys.readouterr()
     assert HINT_NMCLI_NOT_AUTHORIZED in captured.err
+
+
+def test_serve_timestamp_mode_defaults_to_elapsed_and_accepts_per_slice():
+    parser = build_parser()
+    assert parser.parse_args(["serve"]).timestamp_mode == "elapsed"
+    assert parser.parse_args(["serve", "--timestamp-mode", "per-slice"]).timestamp_mode == "per-slice"

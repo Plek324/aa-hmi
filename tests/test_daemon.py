@@ -118,3 +118,58 @@ def test_wait_with_liveness_timeout_none_behaves_like_transport_only_check():
     daemon._wait_until_dropped_or_stopped(session, stop_event, liveness_timeout=None, poll_interval=0.01)
 
     assert stop_event.is_set()
+
+
+# --- video timestamps ---
+#
+# Experiment for the display freeze: the original scheme gave every slice
+# its own +33333us timestamp regardless of real time, so the 4 slices of
+# one image looked like 4 moments and the stream drifted ~0.87s behind
+# real time per second at 1 image/s. "elapsed" mode fixes both.
+
+class _RecordingSession:
+    def __init__(self):
+        self.sent = []
+
+    def is_alive(self, **kw):
+        return True
+
+    def send_frame(self, nal_bytes, ts):
+        self.sent.append(ts)
+
+
+def _four_slices(monkeypatch):
+    monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
+                         lambda data, w, h: [[b"\x65"], [b"\x41"], [b"\x41"], [b"\x41"]])
+
+
+def _frame():
+    return SimpleNamespace(pixel_data=b"", width=854, height=480)
+
+
+def test_elapsed_mode_gives_all_slices_of_one_image_the_same_timestamp(monkeypatch):
+    _four_slices(monkeypatch)
+    holder = daemon._SessionHolder(timestamp_mode="elapsed")
+    holder.session = _RecordingSession()
+    holder.session_start = daemon.time.monotonic()
+    holder.on_frame(_frame())
+    assert len(set(holder.session.sent)) == 1
+    assert holder.image_counter == 1
+    assert holder.frame_counter == 4
+
+
+def test_elapsed_mode_tracks_real_time(monkeypatch):
+    _four_slices(monkeypatch)
+    holder = daemon._SessionHolder(timestamp_mode="elapsed")
+    holder.session = _RecordingSession()
+    holder.session_start = daemon.time.monotonic() - 10.0  # session opened 10s ago
+    holder.on_frame(_frame())
+    assert 9_900_000 < holder.session.sent[0] < 11_000_000
+
+
+def test_per_slice_mode_keeps_old_behavior(monkeypatch):
+    _four_slices(monkeypatch)
+    holder = daemon._SessionHolder(timestamp_mode="per-slice")
+    holder.session = _RecordingSession()
+    holder.on_frame(_frame())
+    assert holder.session.sent == [33333, 66666, 99999, 133332]
