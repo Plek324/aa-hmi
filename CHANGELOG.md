@@ -2,6 +2,23 @@
 
 ## Unreleased (since 0.2.0)
 
+- **Fixed: the display freezing under sustained live updates.** Each
+  image is now encoded as a single slice (`ffmpeg -threads 1`) and sent
+  as one media message, like a real phone does. Before, x264 cut every
+  image into 4 slices, each sent as its own message, and the display's
+  decoder wedged after 1–145 images. Verified: `examples/clock.py` ran
+  1h22m at 1Hz (~4,900 images) without a freeze. `serve
+  --no-single-slice` restores the old behavior for A/B testing.
+- **Messages over 16KB are now sent as proper multi-frame messages**
+  (FIRST/MIDDLE/LAST flags, total size on the first frame, as in aasdk)
+  instead of separate TLS records each flagged as a complete message.
+  Not yet exercised on hardware: clock images stay under 16KB.
+- **Experimental `serve --idr-alternation`** (off by default): alternates
+  the H.264 `idr_pic_id` between images as the spec asks. Froze *sooner*
+  when tested with 4 slices per image; not retested since.
+- `serve --timestamp-mode {elapsed,per-slice}`: video timestamps now
+  track real elapsed time by default.
+
 Several more real bugs found live (2026-09-22), reported by a user
 testing `aa-hmi serve` with `examples/clock.py`:
 

@@ -153,7 +153,7 @@ around, it may limit how usable a genuinely interactive touch UI can be
 on this specific hardware — worth confirming/investigating before relying
 on touch for anything beyond simple confirmation taps.
 
-## The display's video decoder can wedge silently under sustained live use — a real, confirmed failure mode
+## The display's video decoder can wedge silently under sustained live use — RESOLVED 2026-09-24
 
 Reported live (2026-09-22): running `examples/clock.py` at 5Hz, the
 display eventually just stops updating and stays frozen on the last
@@ -176,22 +176,29 @@ architecture (see above) avoided the specific *causes* known from that
 investigation, but apparently not every way this display's decoder can
 get into trouble under sustained live content.
 
-**Leading hypothesis, NOT confirmed**: every frame is encoded by a fresh,
-independent `ffmpeg` invocation (see "Why per-frame ffmpeg invocation"
-above) — each one emits its own SPS/PPS (H.264 parameter sets) as if
-starting a brand new stream, rather than the single SPS/PPS a real
-continuous encoder session would emit once and reuse. At 5Hz that's ~5
-full parameter-set (re)inits per second sent to the display's decoder;
-plausible that repeating this many times eventually corrupts/exhausts
-something in the display's own decoder state, given the correlation
-(happens sooner at higher rates, not at all within a short static test).
-**Untested** — would need decoding and diffing the SPS/PPS bytes across
-consecutive per-frame `ffmpeg` invocations to even confirm they're
-identical or drifting, then experimentally stripping repeated SPS/PPS
-NALs after the first frame of a session to see if that changes anything.
-Flagged here as the next concrete thing to investigate, not implemented,
-since guessing wrong here risks making things worse without hardware
-access to verify against.
+**Root cause, resolved 2026-09-24: several media messages per image.**
+x264's sliced threads (on by default with `-tune zerolatency`) cut every
+image into one slice per CPU core — 4 on a Pi 4 — and every slice went
+out as its own media message. A real phone sends one whole picture per
+message; the display most likely hands each message to its decoder as
+one complete picture, and quarter-pictures eventually wedge it. The
+encoder now runs with `-threads 1`: one slice, one message per image.
+
+Test history, `examples/clock.py` on a real Podofo display:
+
+| Change | Froze after |
+|---|---|
+| 4 slices/image, `+33333us` per slice timestamps | ~32 images |
+| 4 slices/image, same "elapsed" timestamp for all slices of an image | ~130, ~145 images |
+| 4 slices/image + `idr_pic_id` alternation | 1, ~11 images |
+| **1 slice/image (current default)** | **never** — ~4,900 images over 1h22m at 1Hz, stopped only because the PC with the SSH terminals went to sleep |
+
+Ruled out along the way: flow control (the display acks every message
+and never sent a setup response with a limit), repeated SPS/PPS (still
+sent with every image, not a problem once each image is one message),
+and `idr_pic_id` always being 0 (fixing it made things worse; kept as
+the experimental `serve --idr-alternation`). `serve --no-single-slice`
+restores the old behavior if this ever needs re-testing.
 
 ### Mitigation implemented now: protocol-level liveness detection
 
@@ -284,15 +291,18 @@ WiFi re-bootstrap, fresh TLS handshake — from scratch, every time. This
 is always correct, just potentially wasteful if a lighter-weight
 reconnect would have worked.
 
-### Soak-test task (not yet run)
+### Soak-test results
 
-Run `examples/clock.py` against real hardware continuously for 2+ hours
-(longer is better). `aa-hmi serve -v` logs every reconnect with a cause.
-Report back here with what actually happened: zero reconnects the whole
-time (session genuinely persists), reconnects at some roughly periodic
-interval (suggests a real timeout to characterize), or reconnects
-correlating with something else observable (WiFi hiccups, etc). Any of
-these outcomes is useful data — update this section once you have it.
+**2026-09-24**: `examples/clock.py` at 1Hz ran 1h22m (18:24 → 19:46,
+~4,900 images) on one session without freezing. It ended only because
+the PC holding the SSH sessions for `aa-hmi serve` and `clock.py` went to
+sleep, not because of the display or the daemon. That run held the
+RFCOMM link open the whole time (as `daemon.py` always does), so one
+Bluetooth trigger held a live session for over an hour. Still untested:
+multi-hour runs, and whether the RFCOMM link could be closed once the
+session is up. For unattended runs, use the systemd unit in
+`deploy/systemd/` (or `tmux`) so the session doesn't depend on an SSH
+client staying awake.
 
 ## Troubleshooting: a stale kernel-level Bluetooth connection that `bluetoothctl` can't see
 

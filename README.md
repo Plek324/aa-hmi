@@ -37,12 +37,11 @@ full multi-cycle reconnect testing (see
 [`docs/video-live-verification.md`](docs/video-live-verification.md) for
 what's left).
 
-**Known limitation under sustained live use**: a user running
-`examples/clock.py` for several minutes at 1–5Hz saw the display's own
-decoder wedge silently (screen freezes, `aa-hmi` keeps reporting success)
-— see [Known hardware quirks](#known-hardware-quirks). Mitigated with an
-automatic liveness-based reconnect (`--liveness-timeout`), not root-caused
-yet.
+**Sustained live use**: earlier versions froze the display after a few
+minutes of live updates. Fixed (each image is now sent as one message,
+like a phone does); `examples/clock.py` has since run 1h22m at 1Hz
+(~4,900 images) without a freeze — see
+[Known hardware quirks](#known-hardware-quirks).
 
 ## What this is
 
@@ -237,8 +236,7 @@ aa-hmi serve [options]      # full daemon: bootstrap + hold display session + se
   --reconnect-max-attempts N  give up after N consecutive reconnect failures (default: retry forever)
   --liveness-timeout SECONDS reconnect if the display sends nothing at all for this long, even if the
                               connection otherwise looks fine (default: 60; 0 disables). See
-                              docs/video-protocol-notes.md -- the display's decoder has been observed
-                              to wedge silently under sustained use
+                              docs/video-protocol-notes.md
 
 aa-hmi list                  show cached devices
 aa-hmi forget <mac-or-name>  remove one cached device
@@ -338,16 +336,14 @@ but these are worth knowing about:
   rapid-cycle `aa-hmi serve` start/stop against real hardware while
   testing/developing. See
   [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
-- **The display's own video decoder can wedge silently under sustained
-  live use** — confirmed: it just stops updating (screen frozen on the
-  last frame) while `aa-hmi` keeps sending successfully with no errors on
-  either side; only restarting `aa-hmi serve` (not the client) fixes it.
-  Root cause unconfirmed (leading guess: repeated H.264 parameter-set
-  reinitialization from the per-frame encoding approach — see
-  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)).
-  Mitigated, not fixed: `serve` now tracks whether the display has sent
-  *anything* recently and reconnects automatically if not
-  (`--liveness-timeout`, default 60s).
+- **The display's video decoder wedges if an image arrives as several
+  messages** (fixed) — it silently stopped updating after 1–145 images
+  while `aa-hmi` kept sending without errors. Cause: the encoder cut each
+  image into 4 slices, each sent as its own message; a phone sends one
+  whole picture per message. Now one slice = one message per image, and
+  a 1h22m test at 1Hz ran without a freeze. `--liveness-timeout` (default
+  60s) remains as a safety net. Details in
+  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 - **The credential cache stores your WiFi password in plaintext** (with
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
   (usually `~/.config/aa-hmi/devices.json`). It's a local convenience
