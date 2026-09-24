@@ -31,7 +31,7 @@ from . import video_protocol as wire
 from . import video_messages as m
 from .errors import TlsHandshakeError, VideoSessionError
 from .log import log
-from .protocol import encode_string_field, encode_varint_field
+from .protocol import decode_fields, dump_fields, encode_string_field, encode_varint_field, get_varint
 
 TouchCallback = Callable[[bytes], None]
 
@@ -45,12 +45,27 @@ class VideoSessionState(Enum):
 
 class VideoSession:
     def __init__(self, display_ip: str, cert_file: Path, key_file: Path,
-                 display_port: int = m.DISPLAY_PORT, keylog_path: str | None = None):
+                 display_port: int = m.DISPLAY_PORT, keylog_path: str | None = None,
+                 verbose: bool = False):
         self.display_ip = display_ip
         self.display_port = display_port
         self.cert_file = Path(cert_file)
         self.key_file = Path(key_file)
         self.keylog_path = keylog_path
+        self.verbose = verbose
+
+        # Media flow accounting -- see _handle_incoming and ack_stats().
+        # Added to diagnose a real freeze (display stops updating while
+        # every send still succeeds): lets us see whether the display's
+        # acks stop, slow down, or change when that happens.
+        self.frames_sent = 0
+        self.acks_received = 0      # sum of ack "value" fields (frames acked)
+        self.ack_messages = 0       # number of ack messages
+        self.max_unacked: int | None = None  # from AV_SETUP_RESPONSE, if the display sends one
+        self._last_send = 0.0
+        self._last_ack = 0.0
+        self._last_ack_session: int | None = None
+        self._last_ack_value: int | None = None
 
         self.state = VideoSessionState.CONNECTING
         self._sock: socket.socket | None = None
@@ -193,6 +208,27 @@ class VideoSession:
         self._assert_open()
         body = struct.pack(">Q", timestamp) + nal_bytes
         self._send_encrypted_locked(m.CHANNEL_VIDEO, m.FLAGS_NORMAL, m.AV_MEDIA_WITH_TIMESTAMP_INDICATION, body)
+        self.frames_sent += 1
+        self._last_send = time.monotonic()
+
+    def ack_stats(self) -> dict:
+        """Snapshot of media flow: how many media messages we've sent, how
+        many the display has acked, and how long since each. `outstanding`
+        growing without bound (or `seconds_since_ack` climbing while
+        `seconds_since_send` stays small) means the display has stopped
+        acking what we send."""
+        now = time.monotonic()
+        return {
+            "frames_sent": self.frames_sent,
+            "acks_received": self.acks_received,
+            "ack_messages": self.ack_messages,
+            "outstanding": self.frames_sent - self.acks_received,
+            "max_unacked": self.max_unacked,
+            "seconds_since_send": (now - self._last_send) if self._last_send else None,
+            "seconds_since_ack": (now - self._last_ack) if self._last_ack else None,
+            "last_ack_session": self._last_ack_session,
+            "last_ack_value": self._last_ack_value,
+        }
 
     def _assert_open(self) -> None:
         if self.state != VideoSessionState.OPEN:
@@ -269,15 +305,52 @@ class VideoSession:
                 continue
             msg_id = struct.unpack(">H", plaintext[:2])[0]
             body = plaintext[2:]
-            if channel == m.CHANNEL_INPUT and msg_id == m.INPUT_EVENT_INDICATION and self._on_touch_raw:
+            self._handle_incoming(channel, msg_id, body)
+
+    def _handle_incoming(self, channel: int, msg_id: int, body: bytes) -> None:
+        """Dispatch one decrypted message from the display. Previously
+        everything except touch was silently drained; now acks are
+        counted and anything unexpected is logged, so a freeze can be
+        correlated with what the display was (or stopped) saying."""
+        if channel == m.CHANNEL_INPUT and msg_id == m.INPUT_EVENT_INDICATION:
+            if self._on_touch_raw:
                 try:
                     self._on_touch_raw(body)
                 except Exception as e:  # noqa: BLE001 -- a bad callback must never kill the reader
                     log(f"touch callback raised: {type(e).__name__}: {e}")
-            # Everything else (ACKs, status indications, etc) is
-            # deliberately just drained here and not acted on -- reading
-            # it is what matters, to keep the TLS/TCP stream from
-            # stalling on unread incoming data.
+            return
+
+        if channel == m.CHANNEL_VIDEO and msg_id == m.AV_MEDIA_ACK_INDICATION:
+            fields = decode_fields(body)
+            session = get_varint(fields, 1)
+            value = get_varint(fields, 2)
+            self.ack_messages += 1
+            self.acks_received += value if value is not None else 1
+            self._last_ack = time.monotonic()
+            # Log only when the ack's shape changes (every ack so far has
+            # been session=0 value=1) -- a change is exactly the kind of
+            # thing that might coincide with a freeze.
+            if (session, value) != (self._last_ack_session, self._last_ack_value):
+                log(f"<- media ack: session={session} value={value} (ack #{self.ack_messages}, "
+                    f"frames sent so far={self.frames_sent})")
+            self._last_ack_session, self._last_ack_value = session, value
+            return
+
+        if channel == m.CHANNEL_VIDEO and msg_id == m.AV_SETUP_RESPONSE:
+            fields = decode_fields(body)
+            self.max_unacked = get_varint(fields, 2)
+            log(f"<- AV setup response: status={get_varint(fields, 1)} max_unacked={self.max_unacked}")
+            for line in dump_fields(body, indent=2):
+                log(line)
+            return
+
+        # Anything else: always log it in full. These should be rare
+        # (focus indications, control-channel messages) -- and if the
+        # display sends something we never answer (e.g. a ping request),
+        # this is where it'll show up.
+        log(f"<- channel={channel} msg_id={msg_id:#06x} len={len(body)}")
+        for line in dump_fields(body, indent=2):
+            log(line)
 
     # --- shutdown ---
 

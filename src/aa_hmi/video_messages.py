@@ -26,6 +26,18 @@ AV_STOP_INDICATION = 0x8002
 VIDEO_FOCUS_REQUEST = 0x8007
 INPUT_EVENT_INDICATION = 0x8001
 
+# Sent BY the display, on the video channel. 0x8004 and 0x8008 were seen
+# in this project's own decrypted logs (aa_session.py -v: 0x8004 after
+# media frames with two varint fields, 0x8008 in reply to focus
+# requests). Names/field meanings follow aasdk's AVChannelMessage enum
+# and protos -- not independently confirmed beyond that:
+#   AV_SETUP_RESPONSE      field1=status, field2=max_unacked, field3=configs
+#   AV_MEDIA_ACK_INDICATION field1=session, field2=value (frames acked)
+#   VIDEO_FOCUS_INDICATION  field1=focus_mode, field2=unrequested
+AV_SETUP_RESPONSE = 0x8003
+AV_MEDIA_ACK_INDICATION = 0x8004
+VIDEO_FOCUS_INDICATION = 0x8008
+
 # Wire-frame flags byte: 0x0F marks a channel-open frame (confirmed from a
 # real phone's own capture), 0x0B is normal per-channel traffic thereafter.
 FLAGS_CHANNEL_OPEN = 0x0F

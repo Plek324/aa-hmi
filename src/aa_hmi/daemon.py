@@ -154,7 +154,7 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
     cert.ensure_cert(cert_file, key_file)
 
     try:
-        session = VideoSession(args.display_ip, cert_file, key_file)
+        session = VideoSession(args.display_ip, cert_file, key_file, verbose=args.verbose)
         session.connect_and_handshake(timeout=10.0)
         session.open_video_channel()
         session.open_touch_channel(lambda raw: ipc_server.broadcast_touch(parse_touch_event(raw)))
@@ -197,9 +197,25 @@ def _disconnect_wifi_on_shutdown(args, holder: _SessionHolder) -> None:
         log(f"WiFi cleanup on shutdown failed (continuing anyway): {type(e).__name__}: {e}")
 
 
+def _format_ack_stats(stats: dict) -> str:
+    def secs(v):
+        return "never" if v is None else f"{v:.1f}s ago"
+    return (f"media flow: sent={stats['frames_sent']} acked={stats['acks_received']} "
+            f"outstanding={stats['outstanding']} max_unacked={stats['max_unacked']} "
+            f"last send {secs(stats['seconds_since_send'])}, last ack {secs(stats['seconds_since_ack'])}")
+
+
 def _wait_until_dropped_or_stopped(session: VideoSession, stop_event: threading.Event,
-                                    liveness_timeout: float | None, poll_interval: float = 1.0) -> None:
+                                    liveness_timeout: float | None, poll_interval: float = 1.0,
+                                    stats_interval: float | None = None) -> None:
+    """stats_interval (set from -v) prints a media-flow summary that often
+    -- added to catch the moment the display stops acking, since a freeze
+    otherwise leaves nothing in the log."""
+    next_stats = time.monotonic() + stats_interval if stats_interval else None
     while not stop_event.is_set():
+        if next_stats is not None and time.monotonic() >= next_stats:
+            log(_format_ack_stats(session.ack_stats()))
+            next_stats = time.monotonic() + stats_interval
         if not session.is_alive(liveness_timeout=liveness_timeout):
             if session.is_alive():  # transport-level fine, so it must be the liveness check that tripped
                 log(f"video session transport looks fine but the display hasn't sent anything in "
@@ -243,7 +259,8 @@ def run_daemon(args) -> int:
                 holder.reconnect_count += 1
                 log(f"=== display session established (connection #{holder.reconnect_count}), serving IPC ===")
                 liveness_timeout = args.liveness_timeout if args.liveness_timeout and args.liveness_timeout > 0 else None
-                _wait_until_dropped_or_stopped(session, stop_event, liveness_timeout)
+                _wait_until_dropped_or_stopped(session, stop_event, liveness_timeout,
+                                               stats_interval=10.0 if args.verbose else None)
             except RetryCancelledError:
                 # stop_event fired while a bootstrap attempt was retrying/backing
                 # off -- see retry.retry_with_backoff's cancel_event docstring.

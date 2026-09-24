@@ -5,6 +5,17 @@
 Several more real bugs found live (2026-09-22), reported by a user
 testing `aa-hmi serve` with `examples/clock.py`:
 
+- **Diagnostics for the decoder freeze**: messages from the display were
+  previously all drained and discarded except touch. `VideoSession` now
+  counts media acks (`0x8004`: session, value), records `max_unacked`
+  from the AV setup response (`0x8003`) if the display sends one, and
+  logs every other incoming message in full instead of dropping it. With
+  `-v`, `serve` prints a media-flow line every 10s (sent / acked /
+  outstanding / time since last ack). The aim is to find out whether the
+  acks stop or change when the display freezes, and whether we're
+  exceeding a flow-control limit we never honored. Diagnostic only; no
+  behavior change yet.
+
 - **The display's own video decoder can wedge silently under sustained
   live use** (reported: frozen screen after 1-5Hz updates for several
   minutes; `aa-hmi` kept logging successful sends throughout, completely
