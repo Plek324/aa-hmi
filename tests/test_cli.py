@@ -203,3 +203,9 @@ def test_serve_timestamp_mode_defaults_to_elapsed_and_accepts_per_slice():
     parser = build_parser()
     assert parser.parse_args(["serve"]).timestamp_mode == "elapsed"
     assert parser.parse_args(["serve", "--timestamp-mode", "per-slice"]).timestamp_mode == "per-slice"
+
+
+def test_serve_idr_alternation_defaults_on_and_can_be_disabled():
+    parser = build_parser()
+    assert parser.parse_args(["serve"]).idr_alternation is True
+    assert parser.parse_args(["serve", "--no-idr-alternation"]).idr_alternation is False

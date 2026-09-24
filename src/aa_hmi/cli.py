@@ -83,6 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "same value for every slice of one image (default); 'per-slice' = the old "
                              "+33333us per slice, which drifts behind real time -- kept for A/B testing "
                              "the display freeze")
+    serve.add_argument("--idr-alternation", action=argparse.BooleanOptionalAction, default=True,
+                        help="alternate the H.264 idr_pic_id 0/1 between consecutive images, as the "
+                             "spec requires (default on; --no-idr-alternation restores the old "
+                             "always-0 stream, for A/B testing the display freeze)")
     serve.add_argument("-v", "--verbose", action="store_true")
 
     lst = sub.add_parser("list", help="show cached devices")
