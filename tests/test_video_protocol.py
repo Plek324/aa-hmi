@@ -75,3 +75,32 @@ def test_split_tls_records_handles_a_realistic_max_size_record():
 
 def test_split_tls_records_empty_input():
     assert wire.split_tls_records(b"") == []
+
+
+# --- multi-frame messages (FIRST / MIDDLE / LAST) ---
+
+def test_split_plaintext_small_message_is_one_chunk():
+    assert wire.split_plaintext(b"x" * 16384) == [b"x" * 16384]
+
+
+def test_split_plaintext_large_message_chunks_at_16384():
+    chunks = wire.split_plaintext(b"x" * 40000)
+    assert [len(c) for c in chunks] == [16384, 16384, 7232]
+
+
+def test_fragment_flags_single_frame_is_bulk():
+    assert wire.fragment_flags(0x0B, 0, 1) == 0x0B
+
+
+def test_fragment_flags_first_middle_last():
+    assert [wire.fragment_flags(0x0B, i, 3) for i in range(3)] == [0x09, 0x08, 0x0A]
+
+
+def test_make_fragment_frame_first_carries_total_size():
+    frame = wire.make_fragment_frame(3, 0x09, b"abc", 40000)
+    assert frame == bytes([3, 0x09, 0, 3]) + (40000).to_bytes(4, "big") + b"abc"
+
+
+def test_make_fragment_frame_bulk_and_last_have_plain_header():
+    assert wire.make_fragment_frame(3, 0x0B, b"abc", 3) == bytes([3, 0x0B, 0, 3]) + b"abc"
+    assert wire.make_fragment_frame(3, 0x0A, b"abc", 40000) == bytes([3, 0x0A, 0, 3]) + b"abc"

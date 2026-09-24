@@ -52,7 +52,8 @@ class _SessionHolder:
     VideoSession is current, across reconnects, without re-registering a
     new callback each time."""
 
-    def __init__(self, timestamp_mode: str = "elapsed", idr_alternation: bool = True):
+    def __init__(self, timestamp_mode: str = "elapsed", idr_alternation: bool = False,
+                 single_slice: bool = True):
         self.session: VideoSession | None = None
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
         self.frame_counter = 0   # access units (slices) sent this session
@@ -66,6 +67,8 @@ class _SessionHolder:
         # Alternate idr_pic_id 0/1 between consecutive images, as the H.264
         # spec requires (see encoder.encode_frame_to_access_units).
         self.idr_alternation = idr_alternation
+        # One slice (= one media message) per image, like a real phone.
+        self.single_slice = single_slice
         self.reconnect_count = 0
         self.last_ssid: str | None = None  # for run_daemon's final-shutdown WiFi cleanup
         self._last_drop_log = 0.0
@@ -105,17 +108,20 @@ class _SessionHolder:
         try:
             parity = self.image_counter % 2 if self.idr_alternation else 0
             access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height,
-                                                                idr_pic_id_parity=parity)
+                                                                idr_pic_id_parity=parity,
+                                                                single_slice=self.single_slice)
             self.image_counter += 1
             image_ts = self.image_timestamp()
+            sizes = ", ".join(str(sum(len(n) + 4 for n in au)) for au in access_units)
             ts = image_ts
             for au in access_units:
                 nal_bytes = encoder.assemble_nal_bytes(au)
                 self.frame_counter += 1
                 ts = image_ts if self.timestamp_mode == "elapsed" else self.frame_counter * 33333
                 session.send_frame(nal_bytes, ts)
-            log(f"  sent image #{self.image_counter} as {len(access_units)} slice(s), idr_pic_id={parity}, ts={ts}us "
-                f"(slices sent this session: {self.frame_counter})",
+            log(f"  sent image #{self.image_counter} as {len(access_units)} message(s) "
+                f"({sizes} bytes), idr_pic_id={parity}, ts={ts}us "
+                f"(messages sent this session: {self.frame_counter})",
                 verbose_only=True, verbose=True)
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
             log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
@@ -269,7 +275,8 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
 
     holder = _SessionHolder(timestamp_mode=getattr(args, "timestamp_mode", "elapsed"),
-                            idr_alternation=getattr(args, "idr_alternation", True))
+                            idr_alternation=getattr(args, "idr_alternation", False),
+                            single_slice=getattr(args, "single_slice", True))
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
     ipc_server.start(on_frame=holder.on_frame)
 

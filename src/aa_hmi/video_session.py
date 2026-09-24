@@ -59,6 +59,7 @@ class VideoSession:
         # every send still succeeds): lets us see whether the display's
         # acks stop, slow down, or change when that happens.
         self.frames_sent = 0
+        self.fragmented_messages = 0  # messages that needed FIRST/MIDDLE/LAST frames
         self.acks_received = 0      # sum of ack "value" fields (frames acked)
         self.ack_messages = 0       # number of ack messages
         self.max_unacked: int | None = None  # from AV_SETUP_RESPONSE, if the display sends one
@@ -168,11 +169,18 @@ class VideoSession:
     # --- sending (thread-safe, usable from any thread once OPEN) ---
 
     def _send_encrypted_locked(self, channel: int, flags: int, msg_id: int, body: bytes) -> None:
+        plaintext = struct.pack(">H", msg_id) + body
+        chunks = wire.split_plaintext(plaintext)
+        if len(chunks) > 1:
+            self.fragmented_messages += 1
         with self._tls_lock:
-            self._tls_obj.write(struct.pack(">H", msg_id) + body)
-            ciphertext = self._outgoing.read()
-            for record in wire.split_tls_records(ciphertext):
-                self._sock.sendall(wire.make_wire_frame(channel, flags, record))
+            for index, chunk in enumerate(chunks):
+                # Each chunk is <= 16384 bytes, so it encrypts to exactly
+                # one TLS record -- one record per wire frame.
+                self._tls_obj.write(chunk)
+                ciphertext = self._outgoing.read()
+                self._sock.sendall(wire.make_fragment_frame(
+                    channel, wire.fragment_flags(flags, index, len(chunks)), ciphertext, len(plaintext)))
 
     def open_video_channel(self) -> None:
         self._assert_open()
@@ -220,6 +228,7 @@ class VideoSession:
         now = time.monotonic()
         return {
             "frames_sent": self.frames_sent,
+            "fragmented_messages": self.fragmented_messages,
             "acks_received": self.acks_received,
             "ack_messages": self.ack_messages,
             "outstanding": self.frames_sent - self.acks_received,

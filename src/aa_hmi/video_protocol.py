@@ -80,3 +80,51 @@ def split_tls_records(data: bytes) -> list[bytes]:
         records.append(data[i:i + total])
         i += total
     return records
+
+
+# --- multi-frame messages ---
+#
+# The flags byte, per aasdk's FrameHeader: bits 0-1 = frame type
+# (MIDDLE=0, FIRST=1, LAST=2, BULK=3 i.e. "whole message in one frame"),
+# bit 2 = control message on a non-control channel, bit 3 = encrypted.
+# 0x0B = encrypted BULK. A message whose plaintext exceeds one frame's
+# 16384-byte payload limit goes out as FIRST, MIDDLE..., LAST; the FIRST
+# frame's header carries an extra u32 with the total plaintext size.
+#
+# Before this, an oversized message was split into TLS records that were
+# each sent as a separate BULK frame -- so the display saw every piece as
+# a complete (garbage) message of its own. That is the likely real reason
+# "sending a whole frame as one big message" gave a black screen in
+# aa_pi2display. Not yet verified on hardware (clock frames stay under
+# 16KB); layout taken from aasdk.
+
+MAX_FRAME_PAYLOAD = 16384
+FRAME_TYPE_MASK = 0x03
+FRAME_MIDDLE, FRAME_FIRST, FRAME_LAST, FRAME_BULK = 0, 1, 2, 3
+
+
+def split_plaintext(plaintext: bytes, limit: int = MAX_FRAME_PAYLOAD) -> list[bytes]:
+    """Chunks of at most `limit` bytes; one chunk if it already fits."""
+    if len(plaintext) <= limit:
+        return [plaintext]
+    return [plaintext[i:i + limit] for i in range(0, len(plaintext), limit)]
+
+
+def fragment_flags(flags: int, index: int, count: int) -> int:
+    """Frame-type bits for fragment `index` of `count` (BULK if count==1)."""
+    base = flags & ~FRAME_TYPE_MASK
+    if count == 1:
+        return base | FRAME_BULK
+    if index == 0:
+        return base | FRAME_FIRST
+    if index == count - 1:
+        return base | FRAME_LAST
+    return base | FRAME_MIDDLE
+
+
+def make_fragment_frame(channel: int, flags: int, body: bytes, total_size: int | None) -> bytes:
+    """Like make_wire_frame, plus the u32 total size a FIRST frame carries."""
+    header = struct.pack(">BBH", channel, flags, len(body))
+    if (flags & FRAME_TYPE_MASK) == FRAME_FIRST:
+        header += struct.pack(">I", total_size)
+    return header + body

@@ -29,6 +29,11 @@ FFMPEG_ARGS_TEMPLATE = [
     "ffmpeg", "-loglevel", "warning", "-y",
     "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "{width}x{height}", "-r", "1", "-i", "pipe:0",
     "-frames:v", "{frames}",
+    # 1 thread = 1 slice per picture. zerolatency's sliced threads made x264
+    # cut each picture into one slice per CPU core (4 on a Pi 4), and every
+    # slice went out as its own media message -- unlike a real phone, which
+    # sends one whole picture per message. Suspected cause of the freeze.
+    "-threads", "{threads}",
     "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.0", "-pix_fmt", "yuv420p",
     "-preset", "ultrafast", "-tune", "zerolatency",
     "-g", "1",  # kept defensively for clarity of intent -- likely a no-op given -frames:v 1 always emits one keyframe
@@ -39,7 +44,7 @@ FFMPEG_ARGS_TEMPLATE = [
 
 
 def encode_frame_to_h264(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0,
-                          copies: int = 1) -> bytes:
+                          copies: int = 1, single_slice: bool = True) -> bytes:
     """rgb24 must be exactly width*height*3 bytes (no padding/stride).
     Returns raw Annex-B H.264 bytes (a single keyframe access unit, or
     occasionally a keyframe plus a leading SPS/PPS/SEI -- callers should
@@ -53,7 +58,8 @@ def encode_frame_to_h264(rgb24: bytes, width: int, height: int, *, timeout: floa
         raise EncoderError(f"expected {expected} bytes of RGB24 data for {width}x{height}, got {len(rgb24)}")
     if shutil.which("ffmpeg") is None:
         raise EncoderError("ffmpeg not found -- install it (e.g. `sudo apt install ffmpeg`)")
-    cmd = [arg.format(width=width, height=height, frames=copies) for arg in FFMPEG_ARGS_TEMPLATE]
+    threads = 1 if single_slice else 0  # 0 = ffmpeg's auto (one slice per core)
+    cmd = [arg.format(width=width, height=height, frames=copies, threads=threads) for arg in FFMPEG_ARGS_TEMPLATE]
     try:
         result = subprocess.run(cmd, input=rgb24 * copies, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as e:
@@ -125,7 +131,7 @@ def keep_last_picture(nals: list[bytes]) -> list[bytes]:
 
 
 def encode_frame_to_access_units(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0,
-                                  idr_pic_id_parity: int = 0) -> list[list[bytes]]:
+                                  idr_pic_id_parity: int = 0, single_slice: bool = True) -> list[list[bytes]]:
     """Convenience wrapper: encode + parse + group in one call. Usually
     returns exactly one access unit (this whole module only ever encodes
     one input frame at a time), but callers should iterate the result
@@ -143,10 +149,10 @@ def encode_frame_to_access_units(rgb24: bytes, width: int, height: int, *, timeo
     idr_pic_id=1. Alternating 0/1 per image makes the stream conform
     without rewriting any bits by hand."""
     if idr_pic_id_parity:
-        h264 = encode_frame_to_h264(rgb24, width, height, timeout=timeout, copies=2)
+        h264 = encode_frame_to_h264(rgb24, width, height, timeout=timeout, copies=2, single_slice=single_slice)
         nals = keep_last_picture(parse_nals(h264))
     else:
-        nals = parse_nals(encode_frame_to_h264(rgb24, width, height, timeout=timeout))
+        nals = parse_nals(encode_frame_to_h264(rgb24, width, height, timeout=timeout, single_slice=single_slice))
     return group_access_units(nals)
 
 

@@ -178,8 +178,8 @@ def test_per_slice_mode_keeps_old_behavior(monkeypatch):
 def test_idr_alternation_passes_parity_0_1_0_per_image(monkeypatch):
     parities = []
     monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h, idr_pic_id_parity=0: parities.append(idr_pic_id_parity) or [[b"e"]])
-    holder = daemon._SessionHolder()
+                         lambda data, w, h, idr_pic_id_parity=0, **kw: parities.append(idr_pic_id_parity) or [[b"e"]])
+    holder = daemon._SessionHolder(idr_alternation=True)
     holder.session = _RecordingSession()
     for _ in range(3):
         holder.on_frame(_frame())
@@ -189,7 +189,7 @@ def test_idr_alternation_passes_parity_0_1_0_per_image(monkeypatch):
 def test_no_idr_alternation_always_passes_parity_0(monkeypatch):
     parities = []
     monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h, idr_pic_id_parity=0: parities.append(idr_pic_id_parity) or [[b"e"]])
+                         lambda data, w, h, idr_pic_id_parity=0, **kw: parities.append(idr_pic_id_parity) or [[b"e"]])
     holder = daemon._SessionHolder(idr_alternation=False)
     holder.session = _RecordingSession()
     for _ in range(3):

@@ -58,18 +58,32 @@ own capture); `flags=0x0B` is normal per-channel traffic thereafter.
 
 ## The two proven wire-level bugs, both ported forward
 
-- **`split_tls_records`**: a single `tls_obj.write()` can produce
-  ciphertext spanning multiple TLS records (16KB plaintext max per RFC
-  5246). The display's decoder can't handle multiple TLS records bundled
-  under one wire frame — confirmed to cause a black screen. Every
-  encrypted send in `video_session.py` splits and sends each real TLS
-  record as its own wire frame. Cheap insurance, keep it even though the
-  new low-fps use case makes it less likely to matter.
+- **Messages over 16KB** (superseded 2026-09-24): a single TLS record
+  carries at most 16384 bytes of plaintext, so bigger messages used to be
+  split into TLS records, each sent as its own wire frame flagged `0x0B`
+  ("BULK" = a complete message). The display therefore saw every piece
+  as a separate, garbage message — very likely the real reason a whole
+  frame sent as one big message gave a black screen. `video_session.py`
+  now uses aasdk's multi-frame format instead: FIRST (`0x09`, with an
+  extra u32 total plaintext size after the length), MIDDLE (`0x08`),
+  LAST (`0x0A`), one ≤16384-byte plaintext chunk (= one TLS record) per
+  frame. **Not yet verified on hardware** — clock images stay under 16KB
+  and never use it; `ack_stats()["fragmented_messages"]` counts uses.
 - **H.264 access-unit boundaries**: NALs are grouped into access units by
   closing at every VCL slice NAL (type 1 or 5) — see `encoder.py`. This is
-  **deliberately not spec-correct** AUD-based grouping; that was tried
-  once and made a black-screen problem worse. Keep the non-spec-correct
-  version; it's what's proven to work.
+  deliberately not AUD-based grouping. Since 2026-09-24 the encoder runs
+  with `-threads 1`, so each image is **one slice = one media message**,
+  like a real phone sends. Before that, x264's sliced threads cut each
+  image into 4 slices, each sent as its own message; the display (which
+  most likely treats each message as one picture) froze after a variable
+  number of images (1–145 seen). `serve --no-single-slice` restores the
+  old behavior for A/B testing.
+- **idr_pic_id**: every image is a separate one-frame encode, so every
+  image is an IDR picture with `idr_pic_id = 0`; the spec wants
+  consecutive IDRs to differ. `serve --idr-alternation` fixes that
+  (odd images are encoded twice and only the second copy is sent), but in
+  the one live test so far it froze *sooner* (after 1 and ~11 images), so
+  it's off by default.
 
 ## Why per-frame ffmpeg invocation, not a persistent pipe
 
