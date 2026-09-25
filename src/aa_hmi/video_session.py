@@ -29,6 +29,7 @@ from typing import Callable
 
 from . import video_protocol as wire
 from . import video_messages as m
+from .display_info import DisplayInfo, parse_service_discovery_response
 from .errors import TlsHandshakeError, VideoSessionError
 from .log import log
 from .protocol import decode_fields, dump_fields, encode_string_field, encode_varint_field, get_varint
@@ -46,13 +47,15 @@ class VideoSessionState(Enum):
 class VideoSession:
     def __init__(self, display_ip: str, cert_file: Path, key_file: Path,
                  display_port: int = m.DISPLAY_PORT, keylog_path: str | None = None,
-                 verbose: bool = False):
+                 verbose: bool = False, video_size: tuple[int, int] | None = None):
         self.display_ip = display_ip
         self.display_port = display_port
         self.cert_file = Path(cert_file)
         self.key_file = Path(key_file)
         self.keylog_path = keylog_path
         self.verbose = verbose
+        self.video_size = video_size  # what we encode, to warn if the display wants something else
+        self.display_info: DisplayInfo | None = None  # from the display's ServiceDiscoveryResponse
 
         # Media flow accounting -- see _handle_incoming and ack_stats().
         # Added to diagnose a real freeze (display stops updating while
@@ -347,6 +350,18 @@ class VideoSession:
                 log(f"<- media ack: session={session} value={value} (ack #{self.ack_messages}, "
                     f"frames sent so far={self.frames_sent})")
             self._last_ack_session, self._last_ack_value = session, value
+            return
+
+        if channel == m.CHANNEL_CONTROL and msg_id == m.MSG_SERVICE_DISCOVERY_RESPONSE:
+            self.display_info = parse_service_discovery_response(body)
+            log(f"<- display says: {self.display_info.summary()}")
+            wanted = (self.display_info.video_width, self.display_info.video_height)
+            if self.video_size and wanted[0] and wanted != self.video_size:
+                log(f"WARNING: the display asks for {wanted[0]}x{wanted[1]} video but we send "
+                    f"{self.video_size[0]}x{self.video_size[1]} -- see `aa-hmi serve --video-size`")
+            if self.verbose:
+                for line in dump_fields(body, indent=2):
+                    log(line)
             return
 
         if channel == m.CHANNEL_VIDEO and msg_id == m.AV_SETUP_RESPONSE:

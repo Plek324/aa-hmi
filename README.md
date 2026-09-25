@@ -228,6 +228,8 @@ aa-hmi serve [options]      # full daemon: bootstrap + hold display session + se
                               docs/video-protocol-notes.md
   --encoder MODE             persistent (default, ~10ms/image) or per-image (~330ms/image, the
                               proven fallback)
+  --video-size WxH           video resolution, and the size client programs draw at (default:
+                              800x480, what the Podofo display asks for; -v logs what yours asks for)
 
 aa-hmi list                  show cached devices
 aa-hmi forget <mac-or-name>  remove one cached device

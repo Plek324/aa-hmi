@@ -35,6 +35,16 @@ from .errors import (
 )
 
 
+def _parse_size(text: str) -> tuple[int, int]:
+    try:
+        w, h = (int(v) for v in text.lower().split("x"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected WIDTHxHEIGHT, e.g. 800x480, got {text!r}") from None
+    if not (16 <= w <= 4096 and 16 <= h <= 4096) or w % 2 or h % 2:
+        raise argparse.ArgumentTypeError(f"{text!r}: width and height must be even, 16-4096")
+    return w, h
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aa-hmi", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -72,6 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="reconnect if the display sends nothing at all (not even an ACK) for this long, "
                              "even though the connection otherwise looks fine -- a safety net for a silently "
                              "wedged display (see docs/video-protocol-notes.md); 0 disables this check (default: 60)")
+    serve.add_argument("--video-size", type=_parse_size, default=(800, 480), metavar="WxH",
+                        help="video resolution to send, and the image size client programs draw at "
+                             "(default: 800x480, what the Podofo/TF811BT display asks for; `-v` logs "
+                             "what your display asks for)")
     serve.add_argument("--encoder", choices=["persistent", "per-image"], default="persistent",
                         help="'persistent' (default): one long-running ffmpeg, ~10ms per image on a Pi 4; "
                              "'per-image': a fresh ffmpeg for every image, ~330ms (max ~3 images/s), the "

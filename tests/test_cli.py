@@ -202,3 +202,17 @@ def test_serve_encoder_defaults_to_persistent():
     parser = build_parser()
     assert parser.parse_args(["serve"]).encoder == "persistent"
     assert parser.parse_args(["serve", "--encoder", "per-image"]).encoder == "per-image"
+
+
+def test_serve_video_size_defaults_to_800x480_and_parses():
+    parser = build_parser()
+    assert parser.parse_args(["serve"]).video_size == (800, 480)
+    assert parser.parse_args(["serve", "--video-size", "854x480"]).video_size == (854, 480)
+
+
+def test_serve_video_size_rejects_nonsense(capsys):
+    import pytest
+    parser = build_parser()
+    for bad in ["800", "800x", "abcxdef", "801x480", "8x8"]:
+        with pytest.raises(SystemExit):
+            parser.parse_args(["serve", "--video-size", bad])

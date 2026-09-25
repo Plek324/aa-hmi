@@ -18,6 +18,7 @@ library is the whole interface a separate program needs.
    python3 examples/hello_world.py
    python3 examples/clock.py                 # --interval SECONDS, default 5
    python3 examples/stress.py --ramp         # large-image test, see below
+   python3 examples/calibrate.py             # which part of the image is visible
    ```
 
 ## What each one shows
@@ -38,6 +39,11 @@ library is the whole interface a separate program needs.
   number and noise level, and a bar moves along the bottom, so a stuck or
   corrupted image is easy to spot. Run `aa-hmi serve -v` to see the
   sizes and piece counts in its log.
+
+- **`calibrate.py`** — a test pattern: coloured frames every 10 px from
+  each edge (red at 0, orange 10, yellow 20, ... white 70) and tick
+  rulers. The first colour you can see at an edge of the display tells
+  you how many pixels it cuts off there.
 
 All require Pillow (`pip install pillow` / `pip install -e .[dev]` from
 the repo root, or run from wherever your interpreter has Pillow available).

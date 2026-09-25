@@ -129,7 +129,7 @@ def encode_frame_to_access_units(rgb24: bytes, width: int, height: int, *, timeo
 # closely as possible: identical SPS apart from the declared frame rate,
 # and the same fixed QP 20 on every image. `-r 25` rather than `-r 1`:
 # with `-r 1` ffmpeg waits for several seconds' worth of input before
-# encoding anything, and 25 is the highest rate 854x480 allows at level
+# encoding anything, and 25 keeps both 800x480 and 854x480 within level
 # 3.0. One real difference remains: a continuous encoder alternates
 # idr_pic_id 0/1 between images (per-image encodes are always 0).
 

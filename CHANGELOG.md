@@ -2,6 +2,18 @@
 
 ## Unreleased (since 0.2.0)
 
+- **Video is now 800x480, what the display asks for** (was 854x480,
+  inherited from aa_pi2display; the display cut off the extra width).
+  `serve --video-size WxH` overrides it; client programs get the size in
+  `HELLO_ACK` as before, so they adapt automatically.
+- **The display's self-description is decoded** (`display_info.py`):
+  `serve` logs e.g. "display says: video 800x480 @30fps, margins 18x40
+  (visible area ~782x440), 140 dpi, touchscreen 800x480, 'ZJ zlink5
+  Desktop Head Unit' sw 1.0.1", and warns if the display asks for a
+  different resolution than we send.
+- **`examples/calibrate.py`**: a test pattern showing exactly which part
+  of the image the display shows.
+
 - **`examples/stress.py`**: sends hard-to-compress images (10KB to
   ~445KB, 1 to 28 pieces) to test images over 16KB on the display. With
   `-v`, `serve` now logs "in N pieces" for images that needed more than

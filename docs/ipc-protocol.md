@@ -32,7 +32,7 @@ concurrent `FRAME` sends — not solved, noted here as a real follow-up.
 ```
 
 `length` covers `msg_type` plus everything after it. u32, not u16 — a
-single 854×480 RGB24 frame is `854 × 480 × 3 = 1,229,760` bytes, already
+single 800×480 RGB24 frame is `800 × 480 × 3 = 1,152,000` bytes, already
 far past a u16 field's 65535-byte ceiling.
 
 All multi-byte integers in this spec are **big-endian**.
@@ -65,12 +65,13 @@ client_name      : client_name_len bytes, UTF-8
 `HELLO`):
 ```
 protocol_version : u16   -- the server's version; today always 1
-frame_width      : u16   -- e.g. 854
+frame_width      : u16   -- e.g. 800
 frame_height     : u16   -- e.g. 480
 pixel_format     : u8    -- 1 = RGB24 (row-major, 3 bytes/pixel, no padding)
 ```
 The server tells the client the geometry to use, rather than the client
-assuming a fixed 854×480 — this is what lets a future different display
+assuming a fixed size (the daemon's `--video-size`, 800×480 by default) —
+this is what lets a different display
 panel be supported without a protocol version bump. **A client must use
 exactly this geometry for every `FRAME` it sends.**
 

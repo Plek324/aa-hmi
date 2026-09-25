@@ -3,7 +3,7 @@
 A THIRD distinct framing format in this codebase (see protocol.py for
 RFCOMM's u16-length framing, video_protocol.py for the TCP video
 session's channel/flags/u16-length framing) -- needed because a single
-854x480 RGB24 frame is 854*480*3 = 1,229,760 bytes, already well over a
+800x480 RGB24 frame is 800*480*3 = 1,152,000 bytes, already well over a
 u16 length field's 65535-byte ceiling. Full spec: docs/ipc-protocol.md.
 
 Framing: length:u32 BE (covers msg_type + payload) + msg_type:u8 + payload.
@@ -25,7 +25,7 @@ from ..touch_channel import TouchAction, TouchEvent
 
 PROTOCOL_VERSION = 1
 
-DEFAULT_FRAME_WIDTH = 854
+DEFAULT_FRAME_WIDTH = 800
 DEFAULT_FRAME_HEIGHT = 480
 
 HEADER_LEN = 4  # length:u32, covers msg_type + payload that follows it

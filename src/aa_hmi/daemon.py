@@ -39,6 +39,10 @@ from .retry import RetryCancelledError
 from .touch_channel import parse_touch_event
 from .video_session import VideoSession
 
+# What the Podofo/TF811BT display asks for in its ServiceDiscoveryResponse
+# (see display_info.py). Was 854x480 until 2026-09-25, inherited from
+# aa_pi2display; the display cropped the extra width.
+DEFAULT_VIDEO_SIZE = (800, 480)
 _FRAME_DROP_LOG_INTERVAL = 5.0  # seconds between "dropping frame, no session" log lines
 
 
@@ -179,7 +183,8 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
     cert.ensure_cert(cert_file, key_file)
 
     try:
-        session = VideoSession(args.display_ip, cert_file, key_file, verbose=args.verbose)
+        session = VideoSession(args.display_ip, cert_file, key_file, verbose=args.verbose,
+                               video_size=(ipc_server.frame_width, ipc_server.frame_height))
         session.connect_and_handshake(timeout=10.0)
         session.open_video_channel()
         session.open_touch_channel(lambda raw: ipc_server.broadcast_touch(parse_touch_event(raw)))
@@ -270,7 +275,10 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
 
     holder = _SessionHolder(encoder_mode=getattr(args, "encoder", "persistent"))
-    ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
+    width, height = getattr(args, "video_size", DEFAULT_VIDEO_SIZE)
+    log(f"video size: {width}x{height} (clients draw at this size)")
+    ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None,
+                           frame_width=width, frame_height=height)
     ipc_server.start(on_frame=holder.on_frame)
 
     consecutive_failures = 0
