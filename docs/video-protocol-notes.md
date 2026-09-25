@@ -67,8 +67,10 @@ own capture); `flags=0x0B` is normal per-channel traffic thereafter.
   now uses aasdk's multi-frame format instead: FIRST (`0x09`, with an
   extra u32 total plaintext size after the length), MIDDLE (`0x08`),
   LAST (`0x0A`), one ≤16384-byte plaintext chunk (= one TLS record) per
-  frame. **Not yet verified on hardware** — clock images stay under 16KB
-  and never use it; `ack_stats()["fragmented_messages"]` counts uses.
+  frame. **Verified on the display** (2026-09-25) with
+  `examples/stress.py --ramp`: images from ~21KB (2 pieces) up to ~445KB
+  (28 pieces) all displayed fine. `ack_stats()["fragmented_messages"]`
+  counts uses.
 - **H.264 access-unit boundaries**: NALs are grouped into access units by
   closing at every VCL slice NAL (type 1 or 5) — see `encoder.py`. This is
   deliberately not AUD-based grouping. Since 2026-09-24 the encoder runs

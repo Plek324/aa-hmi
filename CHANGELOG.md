@@ -6,7 +6,9 @@
   ~445KB, 1 to 28 pieces) to test images over 16KB on the display. With
   `-v`, `serve` now logs "in N pieces" for images that needed more than
   one. New test: large messages sent over real TLS and reassembled the
-  way the display's receiver does.
+  way the display's receiver does. **Verified on the display**
+  (2026-09-25): `stress.py --ramp` ran fine through every level, up to
+  ~445KB in 28 pieces, so the multi-frame format is right.
 
 - **Faster encoding: ~10ms per image instead of ~330ms** on a Pi 4. The
   daemon now keeps one ffmpeg running (`encoder.PersistentEncoder`)
