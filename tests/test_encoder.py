@@ -85,3 +85,97 @@ def test_encode_frame_to_access_units_gives_one_slice_per_image():
     aus = encoder.encode_frame_to_access_units(rgb24, width, height, timeout=10.0)
     slices = [n for au in aus for n in au if (n[0] & 0x1F) in (1, 5)]
     assert len(slices) == 1
+
+
+# --- persistent encoder: FLV parsing ---
+
+SPS, PPS, SEI, IDR = b"\x67\x42\xc0\x1e", b"\x68\xce\x3c\x80", b"\x06\x05\x01", b"\x65\x88\x84"
+
+
+def _flv_tag(tag_type, data):
+    return (bytes([tag_type]) + len(data).to_bytes(3, "big") + b"\x00" * 7 + data
+            + (11 + len(data)).to_bytes(4, "big"))
+
+
+def _avcc(sps, pps):
+    return (b"\x01\x42\xc0\x1e\xff" + bytes([0xE0 | 1]) + len(sps).to_bytes(2, "big") + sps
+            + b"\x01" + len(pps).to_bytes(2, "big") + pps)
+
+
+def _flv_stream(*images):
+    out = b"FLV\x01\x01\x00\x00\x00\x09" + b"\x00" * 4
+    out += _flv_tag(18, b"onMetaData...")  # script tag, must be skipped
+    out += _flv_tag(9, b"\x17\x00\x00\x00\x00" + _avcc(SPS, PPS))
+    for nals in images:
+        body = b"".join(len(n).to_bytes(4, "big") + n for n in nals)
+        out += _flv_tag(9, b"\x17\x01\x00\x00\x00" + body)
+    return out
+
+
+def _reader_for(data):
+    pos = [0]
+
+    def read_exact(n):
+        if pos[0] + n > len(data):
+            raise EOFError
+        chunk = data[pos[0]:pos[0] + n]
+        pos[0] += n
+        return chunk
+    return encoder.FlvAvcReader(read_exact)
+
+
+def test_parse_avcc():
+    assert encoder.parse_avcc(_avcc(SPS, PPS)) == ([SPS], [PPS])
+
+
+def test_split_length_prefixed():
+    payload = (3).to_bytes(4, "big") + b"abc" + (2).to_bytes(4, "big") + b"de"
+    assert encoder.split_length_prefixed(payload) == [b"abc", b"de"]
+
+
+def test_flv_reader_returns_one_image_at_a_time_with_sps_pps_attached():
+    reader = _reader_for(_flv_stream([SEI, IDR], [IDR]))
+    assert reader.next_image() == [SPS, PPS, SEI, IDR]
+    assert reader.next_image() == [SPS, PPS, IDR]
+    with pytest.raises(EOFError):
+        reader.next_image()
+
+
+def test_flv_reader_drops_in_band_sps_pps_to_avoid_duplicates():
+    reader = _reader_for(_flv_stream([SPS, PPS, IDR]))
+    assert reader.next_image() == [SPS, PPS, IDR]
+
+
+def test_flv_reader_rejects_non_flv():
+    with pytest.raises(EncoderError):
+        _reader_for(b"garbage!!" + b"\x00" * 20).next_image()
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_persistent_encoder_real_ffmpeg():
+    width, height = 320, 240
+    enc = encoder.PersistentEncoder(timeout=10.0)
+    try:
+        for shade in (10, 200, 90):
+            aus = enc.encode(bytes([shade, 100, 50]) * (width * height), width, height)
+            assert len(aus) == 1  # one message per image
+            types = [n[0] & 0x1F for n in aus[0]]
+            assert types[:2] == [7, 8] and types[-1] == 5  # SPS, PPS, ..., IDR slice
+    finally:
+        enc.close()
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_persistent_encoder_recovers_after_ffmpeg_dies():
+    width, height = 64, 64
+    enc = encoder.PersistentEncoder(timeout=10.0)
+    try:
+        enc.encode(b"\x00" * (width * height * 3), width, height)
+        first_proc = enc._proc
+        first_proc.kill()
+        first_proc.wait()
+        # A dead ffmpeg is noticed before the next image and replaced.
+        assert len(enc.encode(b"\x00" * (width * height * 3), width, height)) == 1
+        assert enc._proc is not first_proc
+    finally:
+        enc.close()

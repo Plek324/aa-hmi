@@ -83,23 +83,35 @@ own capture); `flags=0x0B` is normal per-channel traffic thereafter.
   the second copy) was tried and froze *sooner*, so it was dropped; with
   one message per image the display doesn't mind.
 
-## Why per-frame ffmpeg invocation, not a persistent pipe
+## Encoding: a persistent ffmpeg, with a per-image fallback
 
 `aa_pi2display`'s `live_demo.py` used a persistent ffmpeg subprocess +
 reader thread + frame-pacing loop for continuous 5fps rendering, and hit
 an unresolved black-screen bug under that load (several real causes found
 and fixed — sparse keyframes, frame-pacing catch-up bursts, a silently-dying
-reader thread on an empty NAL — but the black screen persisted, root cause
-never found).
+reader thread on an empty NAL). In hindsight, sending each image as
+several messages (see the freeze section below) was likely part of it.
 
-This project's actual target rate is 1 frame per 1–10 seconds, never
-continuous video. At that rate, `encoder.py` spawns a fresh `ffmpeg`
-process per frame instead: no persistent pipe, no frame-pacing loop to
-race, no long-lived reader thread to silently die. Every invocation
-encodes exactly one input image, so it's always a keyframe by
-construction — nothing resembling the old bug categories can occur here.
-Process-spawn overhead (tens of ms on a Pi 4) is irrelevant against a
-multi-second budget.
+`aa-hmi` therefore started with a fresh `ffmpeg` per image: no persistent
+state, always a keyframe. That is proven (80,701 images overnight) but
+costs ~330ms per image on a Pi 4, almost all of it process startup, which
+caps the rate at ~3 images/s.
+
+Since 2026-09-25 the default is `encoder.PersistentEncoder`: one
+long-running ffmpeg, **~10ms per image** on a Pi 4. Images are encoded
+on demand (no frame-pacing loop), still every image a single-slice
+keyframe, one message per image. ffmpeg writes FLV instead of raw H.264,
+because FLV gives every encoded image a tag with an exact length — raw
+H.264 has no way to tell that an image is complete until the next one
+starts. SPS/PPS (sent once in FLV's sequence header) are re-attached to
+every image, as before. Settings keep the stream as close as possible to
+the per-image encoder's: same SPS apart from the declared frame rate
+(`-r 25`: `-r 1` makes ffmpeg wait for several seconds of input before
+it encodes anything, and 25 is the most 854x480 allows at level 3.0),
+same fixed QP 20. One unavoidable difference: a continuous encoder
+alternates `idr_pic_id` 0/1 between images. If ffmpeg dies or stalls,
+that image falls back to a one-off ffmpeg and the next one gets a fresh
+persistent process. `serve --encoder per-image` switches back entirely.
 
 ## Touch: proven vs. not proven — a correction
 

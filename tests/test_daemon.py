@@ -21,7 +21,7 @@ def test_disconnect_wifi_on_shutdown_does_nothing_if_never_connected(monkeypatch
     connect) -- nothing to clean up, and must not call nmcli at all."""
     disconnect_calls = []
     monkeypatch.setattr(wifi, "disconnect", lambda iface=None: disconnect_calls.append(iface))
-    holder = daemon._SessionHolder()
+    holder = daemon._SessionHolder(encoder_mode="per-image")
     assert holder.last_ssid is None
 
     daemon._disconnect_wifi_on_shutdown(_fake_args(), holder)
@@ -37,7 +37,7 @@ def test_disconnect_wifi_on_shutdown_disconnects_and_forgets(monkeypatch):
     monkeypatch.setattr(wifi, "disconnect", lambda iface=None: disconnect_calls.append(iface))
     monkeypatch.setattr(wifi, "forget", lambda ssid: forget_calls.append(ssid))
 
-    holder = daemon._SessionHolder()
+    holder = daemon._SessionHolder(encoder_mode="per-image")
     holder.last_ssid = "TF811-1c64201a"
 
     daemon._disconnect_wifi_on_shutdown(_fake_args(wifi_iface="wlan0"), holder)
@@ -53,7 +53,7 @@ def test_disconnect_wifi_on_shutdown_never_raises(monkeypatch, capsys):
         raise OSError("nmcli exploded")
 
     monkeypatch.setattr(wifi, "disconnect", boom)
-    holder = daemon._SessionHolder()
+    holder = daemon._SessionHolder(encoder_mode="per-image")
     holder.last_ssid = "TF811-1c64201a"
 
     daemon._disconnect_wifi_on_shutdown(_fake_args(), holder)  # must not raise
@@ -147,7 +147,7 @@ def _frame():
 
 def test_all_messages_of_one_image_share_a_timestamp(monkeypatch):
     _two_messages(monkeypatch)
-    holder = daemon._SessionHolder()
+    holder = daemon._SessionHolder(encoder_mode="per-image")
     holder.session = _RecordingSession()
     holder.session_start = daemon.time.monotonic()
     holder.on_frame(_frame())
@@ -158,8 +158,23 @@ def test_all_messages_of_one_image_share_a_timestamp(monkeypatch):
 
 def test_timestamp_tracks_real_time(monkeypatch):
     _two_messages(monkeypatch)
-    holder = daemon._SessionHolder()
+    holder = daemon._SessionHolder(encoder_mode="per-image")
     holder.session = _RecordingSession()
     holder.session_start = daemon.time.monotonic() - 10.0  # session opened 10s ago
     holder.on_frame(_frame())
     assert 9_900_000 < holder.session.sent[0] < 11_000_000
+
+
+def test_persistent_encoder_failure_falls_back_to_per_image(monkeypatch):
+    calls = []
+    monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
+                         lambda data, w, h: calls.append("per-image") or [[b"\x65"]])
+    holder = daemon._SessionHolder(encoder_mode="persistent")
+
+    def broken(*a):
+        raise daemon.EncoderError("ffmpeg died")
+    holder.persistent_encoder.encode = broken
+    holder.session = _RecordingSession()
+    holder.on_frame(_frame())
+    assert calls == ["per-image"]
+    assert len(holder.session.sent) == 1

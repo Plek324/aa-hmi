@@ -31,7 +31,7 @@ from pathlib import Path
 
 from . import cache, cert, coexistence, encoder, orchestrate, wifi
 from .discovery import BluetoothCtl
-from .errors import HINT_VIDEO_SESSION_FLAKY
+from .errors import HINT_VIDEO_SESSION_FLAKY, EncoderError
 from .ipc import protocol as ipc_wire
 from .ipc.server import IpcServer
 from .log import log
@@ -48,8 +48,12 @@ class _SessionHolder:
     VideoSession is current, across reconnects, without re-registering a
     new callback each time."""
 
-    def __init__(self):
+    def __init__(self, encoder_mode: str = "persistent"):
         self.session: VideoSession | None = None
+        # "persistent": one long-running ffmpeg (~10ms/image); "per-image":
+        # a fresh ffmpeg per image (~330ms, the proven fallback).
+        self.encoder_mode = encoder_mode
+        self.persistent_encoder = encoder.PersistentEncoder()
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
         self.frame_counter = 0   # media messages sent this session
         self.image_counter = 0   # client images sent this session
@@ -89,7 +93,9 @@ class _SessionHolder:
                 self._last_drop_log = now
             return
         try:
-            access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
+            started = time.monotonic()
+            access_units = self._encode(frame_msg)
+            encode_ms = (time.monotonic() - started) * 1000
             self.image_counter += 1
             ts = self.image_timestamp()
             sizes = []
@@ -99,10 +105,19 @@ class _SessionHolder:
                 session.send_frame(nal_bytes, ts)
                 sizes.append(str(len(nal_bytes)))
             log(f"  sent image #{self.image_counter} as {len(access_units)} message(s) "
-                f"({', '.join(sizes)} bytes), ts={ts}us",
+                f"({', '.join(sizes)} bytes), encoded in {encode_ms:.0f}ms, ts={ts}us",
                 verbose_only=True, verbose=True)
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
             log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
+
+    def _encode(self, frame_msg: ipc_wire.FrameMsg) -> list[list[bytes]]:
+        if self.encoder_mode == "persistent":
+            try:
+                return self.persistent_encoder.encode(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
+            except EncoderError as e:
+                # The next image gets a fresh ffmpeg; this one goes the slow way.
+                log(f"persistent encoder failed, using a one-off ffmpeg for this image: {e}")
+        return encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
 
 
 def _cache_path(args) -> Path:
@@ -177,6 +192,7 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
     holder.frame_counter = 0
     holder.image_counter = 0
     holder.session_start = time.monotonic()
+    holder.persistent_encoder.close()  # each session's stream starts from a fresh encoder
     return session
 
 
@@ -252,7 +268,7 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    holder = _SessionHolder()
+    holder = _SessionHolder(encoder_mode=getattr(args, "encoder", "persistent"))
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
     ipc_server.start(on_frame=holder.on_frame)
 
@@ -289,5 +305,6 @@ def run_daemon(args) -> int:
     finally:
         ipc_server.stop()
         holder.close_session()
+        holder.persistent_encoder.close()
         _disconnect_wifi_on_shutdown(args, holder)
     return 0

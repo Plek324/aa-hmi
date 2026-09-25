@@ -72,6 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="reconnect if the display sends nothing at all (not even an ACK) for this long, "
                              "even though the connection otherwise looks fine -- a safety net for a silently "
                              "wedged display (see docs/video-protocol-notes.md); 0 disables this check (default: 60)")
+    serve.add_argument("--encoder", choices=["persistent", "per-image"], default="persistent",
+                        help="'persistent' (default): one long-running ffmpeg, ~10ms per image on a Pi 4; "
+                             "'per-image': a fresh ffmpeg for every image, ~330ms (max ~3 images/s), the "
+                             "long-proven fallback")
     serve.add_argument("-v", "--verbose", action="store_true")
 
     lst = sub.add_parser("list", help="show cached devices")

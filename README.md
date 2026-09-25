@@ -26,8 +26,11 @@ python3 examples/clock.py        # a separate program, talking only to the socke
   socket. **Stable for long runs**: `examples/clock.py` ran overnight at
   2 images/s — 11h22m, 80,701 images — on one session, without a freeze
   or a reconnect.
-- **Frame rate**: up to ~3 images/s on a Pi 4 (each image is encoded by
-  its own `ffmpeg` run, ~330ms). Fine for dashboards; not for video.
+- **Frame rate**: encoding takes ~10ms per image on a Pi 4 (one
+  long-running `ffmpeg`), so 5+ images/s is realistic. Meant for
+  dashboards and maps, not smooth video. `--encoder per-image` falls back
+  to one `ffmpeg` run per image (~330ms, max ~3 images/s), proven
+  overnight.
 - **Touch**: the channel opens and raw event bytes reach your program,
   but x/y decoding is a placeholder, not done yet. Touching the display
   also brings up the display's own popup menu (see
@@ -58,7 +61,7 @@ python3 examples/clock.py        # a separate program, talking only to the socke
   [NetworkManager](https://networkmanager.dev/) (`nmcli`) — both are
   installed by default on Raspberry Pi OS.
 - **For `aa-hmi serve` (daemon mode) only**: `openssl` (self-signed cert,
-  auto-generated on first run) and `ffmpeg` (per-frame H.264 encoding).
+  auto-generated on first run) and `ffmpeg` (H.264 encoding).
   `aa-hmi run` alone needs neither.
 - Python 3.9+. **Zero pip runtime dependencies for `aa-hmi` itself** —
   only the standard library (including `socket.AF_BLUETOOTH`/`BTPROTO_RFCOMM`
@@ -223,6 +226,8 @@ aa-hmi serve [options]      # full daemon: bootstrap + hold display session + se
   --liveness-timeout SECONDS reconnect if the display sends nothing at all for this long, even if the
                               connection otherwise looks fine (default: 60; 0 disables). See
                               docs/video-protocol-notes.md
+  --encoder MODE             persistent (default, ~10ms/image) or per-image (~330ms/image, the
+                              proven fallback)
 
 aa-hmi list                  show cached devices
 aa-hmi forget <mac-or-name>  remove one cached device
@@ -245,8 +250,8 @@ Once WiFi is up, `serve` opens a second, separate protocol over TCP/TLS
 channel multiplexed over it. See
 [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md) for that
 side, including the one genuinely tricky bug (a TLS-handshake-completion
-ordering issue) and why per-frame encoding was chosen over a persistent
-pipe. The local socket protocol bridging that to your own program is
+ordering issue), how images are encoded, and why each image must be one
+message. The local socket protocol bridging that to your own program is
 documented separately in [`docs/ipc-protocol.md`](docs/ipc-protocol.md).
 
 ## Tested with
@@ -382,8 +387,6 @@ Issues and PRs welcome — especially:
   field numbers) — see [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s
   follow-up task. This is the single highest-value thing to work on if
   you want touch to actually be usable.
-- **Faster encoding** — a persistent encoder instead of one `ffmpeg` run
-  per image, to get past ~3 images/s.
 - Working through [`docs/video-live-verification.md`](docs/video-live-verification.md)'s
   staged checklist on your own hardware and reporting results either way.
 

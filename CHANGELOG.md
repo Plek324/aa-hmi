@@ -2,6 +2,14 @@
 
 ## Unreleased (since 0.2.0)
 
+- **Faster encoding: ~10ms per image instead of ~330ms** on a Pi 4. The
+  daemon now keeps one ffmpeg running (`encoder.PersistentEncoder`)
+  instead of starting one per image, which lifts the ~3 images/s cap.
+  ffmpeg outputs FLV so each image's end is known immediately. If it
+  fails, that image falls back to a one-off ffmpeg; `serve --encoder
+  per-image` switches back entirely. With `-v`, each image's log line
+  shows its encode time.
+
 - **Fixed: the display freezing under sustained live updates.** Each
   image is now encoded as a single slice (`ffmpeg -threads 1`) and sent
   as one media message, like a real phone does. Before, x264 cut every
