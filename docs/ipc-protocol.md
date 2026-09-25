@@ -65,13 +65,15 @@ client_name      : client_name_len bytes, UTF-8
 `HELLO`):
 ```
 protocol_version : u16   -- the server's version; today always 1
-frame_width      : u16   -- e.g. 800
-frame_height     : u16   -- e.g. 480
+frame_width      : u16   -- e.g. 782
+frame_height     : u16   -- e.g. 440
 pixel_format     : u8    -- 1 = RGB24 (row-major, 3 bytes/pixel, no padding)
 ```
 The server tells the client the geometry to use, rather than the client
-assuming a fixed size (the daemon's `--video-size`, 800×480 by default) —
-this is what lets a different display
+assuming a fixed size. It's the display's *visible* area: the video
+size minus its margins (daemon flags `--video-size` and `--margins`;
+782×440 by default, inside 800×480 video) — the daemon centres the
+client's image in the video. This is what lets a different display
 panel be supported without a protocol version bump. **A client must use
 exactly this geometry for every `FRAME` it sends.**
 

@@ -51,7 +51,26 @@ FFMPEG_ARGS_TEMPLATE = [
 ]
 
 
-def encode_frame_to_h264(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0) -> bytes:
+Pad = tuple[int, int, int, int]  # (video width, video height, x, y): where the image goes in the video
+
+
+def build_command(template: list[str], width: int, height: int, pad: Pad | None) -> list[str]:
+    """Fill in an ffmpeg command template. With `pad`, ffmpeg itself places
+    the width x height input image at (x, y) on a black video frame of the
+    padded size -- that's how client images drawn at the display's visible
+    area end up inside its margins."""
+    cmd = [arg.format(width=width, height=height) for arg in template]
+    if pad is not None:
+        out_w, out_h, x, y = pad
+        if out_w < width + x or out_h < height + y:
+            raise EncoderError(f"a {width}x{height} image at ({x},{y}) doesn't fit in {out_w}x{out_h}")
+        i = cmd.index("-c:v")
+        cmd[i:i] = ["-vf", f"pad={out_w}:{out_h}:{x}:{y}:black"]
+    return cmd
+
+
+def encode_frame_to_h264(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0,
+                         pad: Pad | None = None) -> bytes:
     """rgb24 must be exactly width*height*3 bytes (no padding/stride).
     Returns raw Annex-B H.264 bytes (a single keyframe access unit, or
     occasionally a keyframe plus a leading SPS/PPS/SEI -- callers should
@@ -62,7 +81,7 @@ def encode_frame_to_h264(rgb24: bytes, width: int, height: int, *, timeout: floa
         raise EncoderError(f"expected {expected} bytes of RGB24 data for {width}x{height}, got {len(rgb24)}")
     if shutil.which("ffmpeg") is None:
         raise EncoderError("ffmpeg not found -- install it (e.g. `sudo apt install ffmpeg`)")
-    cmd = [arg.format(width=width, height=height) for arg in FFMPEG_ARGS_TEMPLATE]
+    cmd = build_command(FFMPEG_ARGS_TEMPLATE, width, height, pad)
     try:
         result = subprocess.run(cmd, input=rgb24, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as e:
@@ -106,11 +125,12 @@ def group_access_units(nals: list[bytes]) -> list[list[bytes]]:
     return aus
 
 
-def encode_frame_to_access_units(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0) -> list[list[bytes]]:
+def encode_frame_to_access_units(rgb24: bytes, width: int, height: int, *, timeout: float = 5.0,
+                                 pad: Pad | None = None) -> list[list[bytes]]:
     """Convenience wrapper: encode + parse + group in one call. Returns one
     access unit per image in practice, but callers should iterate the
     result rather than assume that."""
-    return group_access_units(parse_nals(encode_frame_to_h264(rgb24, width, height, timeout=timeout)))
+    return group_access_units(parse_nals(encode_frame_to_h264(rgb24, width, height, timeout=timeout, pad=pad)))
 
 
 # --- persistent encoder ---
@@ -202,8 +222,9 @@ class PersistentEncoder:
     If ffmpeg dies or stalls, encode() raises EncoderError and the next
     call starts a fresh ffmpeg."""
 
-    def __init__(self, *, timeout: float = 5.0):
+    def __init__(self, *, timeout: float = 5.0, pad: Pad | None = None):
         self.timeout = timeout
+        self.pad = pad  # see build_command
         self._proc: subprocess.Popen | None = None
         self._geometry: tuple[int, int] | None = None
         self._results: queue.Queue = queue.Queue()
@@ -249,7 +270,7 @@ class PersistentEncoder:
         self.close()
         if shutil.which("ffmpeg") is None:
             raise EncoderError("ffmpeg not found -- install it (e.g. `sudo apt install ffmpeg`)")
-        cmd = [arg.format(width=width, height=height) for arg in PERSISTENT_FFMPEG_ARGS_TEMPLATE]
+        cmd = build_command(PERSISTENT_FFMPEG_ARGS_TEMPLATE, width, height, self.pad)
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self._proc = proc
         self._geometry = (width, height)

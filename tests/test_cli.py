@@ -216,3 +216,13 @@ def test_serve_video_size_rejects_nonsense(capsys):
     for bad in ["800", "800x", "abcxdef", "801x480", "8x8"]:
         with pytest.raises(SystemExit):
             parser.parse_args(["serve", "--video-size", bad])
+
+
+def test_serve_margins_default_and_parse():
+    import pytest
+    parser = build_parser()
+    assert parser.parse_args(["serve"]).margins == (18, 40)
+    assert parser.parse_args(["serve", "--margins", "0x0"]).margins == (0, 0)
+    for bad in ["9x40", "-2x4", "x"]:
+        with pytest.raises(SystemExit):
+            parser.parse_args(["serve", "--margins", bad])

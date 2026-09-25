@@ -47,7 +47,8 @@ class VideoSessionState(Enum):
 class VideoSession:
     def __init__(self, display_ip: str, cert_file: Path, key_file: Path,
                  display_port: int = m.DISPLAY_PORT, keylog_path: str | None = None,
-                 verbose: bool = False, video_size: tuple[int, int] | None = None):
+                 verbose: bool = False, video_size: tuple[int, int] | None = None,
+                 margins: tuple[int, int] | None = None):
         self.display_ip = display_ip
         self.display_port = display_port
         self.cert_file = Path(cert_file)
@@ -55,6 +56,7 @@ class VideoSession:
         self.keylog_path = keylog_path
         self.verbose = verbose
         self.video_size = video_size  # what we encode, to warn if the display wants something else
+        self.margins = margins        # what we assume, same reason
         self.display_info: DisplayInfo | None = None  # from the display's ServiceDiscoveryResponse
 
         # Media flow accounting -- see _handle_incoming and ack_stats().
@@ -359,6 +361,10 @@ class VideoSession:
             if self.video_size and wanted[0] and wanted != self.video_size:
                 log(f"WARNING: the display asks for {wanted[0]}x{wanted[1]} video but we send "
                     f"{self.video_size[0]}x{self.video_size[1]} -- see `aa-hmi serve --video-size`")
+            declared = (self.display_info.margin_width, self.display_info.margin_height)
+            if self.margins is not None and wanted[0] and declared != self.margins:
+                log(f"WARNING: the display declares margins of {declared[0]}x{declared[1]} but we use "
+                    f"{self.margins[0]}x{self.margins[1]} -- see `aa-hmi serve --margins`")
             if self.verbose:
                 for line in dump_fields(body, indent=2):
                     log(line)

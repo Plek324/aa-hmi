@@ -179,3 +179,37 @@ def test_persistent_encoder_recovers_after_ffmpeg_dies():
         assert enc._proc is not first_proc
     finally:
         enc.close()
+
+
+# --- padding client images into the display's margins ---
+
+def test_build_command_without_pad_has_no_filter():
+    cmd = encoder.build_command(encoder.FFMPEG_ARGS_TEMPLATE, 782, 440, None)
+    assert "-vf" not in cmd and "782x440" in cmd
+
+
+def test_build_command_with_pad_inserts_filter_before_codec():
+    cmd = encoder.build_command(encoder.PERSISTENT_FFMPEG_ARGS_TEMPLATE, 782, 440, (800, 480, 9, 20))
+    i = cmd.index("-vf")
+    assert cmd[i + 1] == "pad=800:480:9:20:black"
+    assert cmd[i + 2] == "-c:v"
+    assert "782x440" in cmd  # input size is the client's
+
+
+def test_build_command_rejects_a_pad_that_does_not_fit():
+    with pytest.raises(EncoderError):
+        encoder.build_command(encoder.FFMPEG_ARGS_TEMPLATE, 790, 440, (800, 480, 20, 20))
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_persistent_encoder_with_pad_outputs_the_video_size():
+    import subprocess
+    enc = encoder.PersistentEncoder(timeout=10.0, pad=(96, 64, 8, 4))
+    try:
+        aus = enc.encode(bytes([200, 50, 50]) * (80 * 56), 80, 56)
+    finally:
+        enc.close()
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                            "-f", "h264", "-"], input=encoder.assemble_nal_bytes(aus[0]),
+                           capture_output=True, check=True)
+    assert probe.stdout.decode().strip() == "96,64"

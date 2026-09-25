@@ -43,6 +43,12 @@ from .video_session import VideoSession
 # (see display_info.py). Was 854x480 until 2026-09-25, inherited from
 # aa_pi2display; the display cropped the extra width.
 DEFAULT_VIDEO_SIZE = (800, 480)
+# Same source: Android Auto margins, the video's edges that may not be
+# visible. Measured on the Podofo with examples/calibrate.py (2026-09-25):
+# 20px really are cut off top and bottom; left/right lose less than the
+# declared 9px each, so the margins are a safe (slightly conservative)
+# description of the visible area.
+DEFAULT_MARGINS = (18, 40)
 _FRAME_DROP_LOG_INTERVAL = 5.0  # seconds between "dropping frame, no session" log lines
 
 
@@ -52,12 +58,15 @@ class _SessionHolder:
     VideoSession is current, across reconnects, without re-registering a
     new callback each time."""
 
-    def __init__(self, encoder_mode: str = "persistent"):
+    def __init__(self, encoder_mode: str = "persistent", pad: encoder.Pad | None = None):
         self.session: VideoSession | None = None
         # "persistent": one long-running ffmpeg (~10ms/image); "per-image":
         # a fresh ffmpeg per image (~330ms, the proven fallback).
         self.encoder_mode = encoder_mode
-        self.persistent_encoder = encoder.PersistentEncoder()
+        self.pad = pad  # client images are placed at (x, y) inside the video frame
+        self.video_size: tuple[int, int] | None = None
+        self.margins: tuple[int, int] | None = None
+        self.persistent_encoder = encoder.PersistentEncoder(pad=pad)
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
         self.frame_counter = 0   # media messages sent this session
         self.image_counter = 0   # client images sent this session
@@ -122,7 +131,8 @@ class _SessionHolder:
             except EncoderError as e:
                 # The next image gets a fresh ffmpeg; this one goes the slow way.
                 log(f"persistent encoder failed, using a one-off ffmpeg for this image: {e}")
-        return encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
+        return encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height,
+                                                    pad=self.pad)
 
 
 def _cache_path(args) -> Path:
@@ -184,7 +194,7 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
 
     try:
         session = VideoSession(args.display_ip, cert_file, key_file, verbose=args.verbose,
-                               video_size=(ipc_server.frame_width, ipc_server.frame_height))
+                               video_size=holder.video_size, margins=holder.margins)
         session.connect_and_handshake(timeout=10.0)
         session.open_video_channel()
         session.open_touch_channel(lambda raw: ipc_server.broadcast_touch(parse_touch_event(raw)))
@@ -274,11 +284,19 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    holder = _SessionHolder(encoder_mode=getattr(args, "encoder", "persistent"))
-    width, height = getattr(args, "video_size", DEFAULT_VIDEO_SIZE)
-    log(f"video size: {width}x{height} (clients draw at this size)")
+    video_w, video_h = getattr(args, "video_size", DEFAULT_VIDEO_SIZE)
+    margin_w, margin_h = getattr(args, "margins", DEFAULT_MARGINS)
+    client_w, client_h = video_w - margin_w, video_h - margin_h
+    if client_w < 16 or client_h < 16:
+        raise SystemExit(f"error: margins {margin_w}x{margin_h} leave no room in {video_w}x{video_h} video")
+    pad = (video_w, video_h, margin_w // 2, margin_h // 2) if (margin_w or margin_h) else None
+    log(f"video {video_w}x{video_h}; client programs draw {client_w}x{client_h}, "
+        f"centred inside margins of {margin_w}x{margin_h}")
+
+    holder = _SessionHolder(encoder_mode=getattr(args, "encoder", "persistent"), pad=pad)
+    holder.video_size, holder.margins = (video_w, video_h), (margin_w, margin_h)
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None,
-                           frame_width=width, frame_height=height)
+                           frame_width=client_w, frame_height=client_h)
     ipc_server.start(on_frame=holder.on_frame)
 
     consecutive_failures = 0

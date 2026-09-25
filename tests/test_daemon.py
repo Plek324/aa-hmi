@@ -139,7 +139,7 @@ class _RecordingSession:
 
 def _two_messages(monkeypatch):
     monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h: [[b"\x67", b"\x65"], [b"\x41"]])
+                         lambda data, w, h, **kw: [[b"\x67", b"\x65"], [b"\x41"]])
 
 
 def _frame():
@@ -169,7 +169,7 @@ def test_timestamp_tracks_real_time(monkeypatch):
 def test_persistent_encoder_failure_falls_back_to_per_image(monkeypatch):
     calls = []
     monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h: calls.append("per-image") or [[b"\x65"]])
+                         lambda data, w, h, **kw: calls.append("per-image") or [[b"\x65"]])
     holder = daemon._SessionHolder(encoder_mode="persistent")
 
     def broken(*a):

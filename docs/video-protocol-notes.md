@@ -119,6 +119,35 @@ Verified on the display (2026-09-25): 10 images/s for 3,000 images, no
 problems — so the display is fine with alternating `idr_pic_id` once
 each image is one message.
 
+## Screen geometry: 800x480 video, 782x440 visible
+
+The display describes itself in its ServiceDiscoveryResponse (control
+channel, msg id `0x0006`), decoded by `display_info.py` and logged by
+`serve` as "display says: ...". The Podofo/TF811BT says:
+
+- video **800x480** @30fps, 140 dpi (first video config; our AV setup
+  request picks config 0)
+- margins **18 x 40** (width x height, in total)
+- touchscreen **800x480**
+- identity: "ZJ zlink5 Desktop Head Unit", sw 1.0.1
+
+Until 2026-09-25 we sent 854x480 (inherited from aa_pi2display). The
+display decoded it but showed only part of the width, which showed up as
+invisible noise strips on the left in `examples/stress.py`.
+
+Android Auto margins mark video edges that may not be visible; a phone
+keeps its UI inside them. Measured with `examples/calibrate.py` at
+800x480 (coloured frames every 10px from each edge): the top loses ~20px
+and the bottom ~21px, matching the declared 40; the left loses ~2px and
+the right 4-10px, less than the declared 9 each. So the margins are a
+reliable, slightly conservative description of the visible area, and
+no scaling was visible.
+
+Client programs therefore draw **782x440** (`HELLO_ACK` tells them), and
+ffmpeg pads that onto a black 800x480 frame at (9, 20). Touch
+coordinates, once decoded, will be in the 800x480 touchscreen space:
+subtract (9, 20) to get client coordinates.
+
 ## Touch: proven vs. not proven — a correction
 
 An earlier doc (`aa_pi2display`'s `real-protocol-findings.md`) claims

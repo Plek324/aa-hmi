@@ -4,8 +4,14 @@
 
 - **Video is now 800x480, what the display asks for** (was 854x480,
   inherited from aa_pi2display; the display cut off the extra width).
-  `serve --video-size WxH` overrides it; client programs get the size in
-  `HELLO_ACK` as before, so they adapt automatically.
+- **Client programs now draw exactly the visible area: 782x440.** The
+  display declares margins of 18x40 (edges that may not be visible);
+  measured with `examples/calibrate.py`, 20px really are cut off top and
+  bottom, and a few px left and right. The daemon centres the client's
+  image inside the margins (ffmpeg's pad filter, black border), so
+  nothing a program draws falls off the screen. Programs get the size
+  in `HELLO_ACK` as before and adapt automatically. `serve --video-size`
+  and `--margins` override the defaults (`--margins 0x0` = full video).
 - **The display's self-description is decoded** (`display_info.py`):
   `serve` logs e.g. "display says: video 800x480 @30fps, margins 18x40
   (visible area ~782x440), 140 dpi, touchscreen 800x480, 'ZJ zlink5

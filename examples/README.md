@@ -43,7 +43,9 @@ library is the whole interface a separate program needs.
 - **`calibrate.py`** — a test pattern: coloured frames every 10 px from
   each edge (red at 0, orange 10, yellow 20, ... white 70) and tick
   rulers. The first colour you can see at an edge of the display tells
-  you how many pixels it cuts off there.
+  you how many pixels it cuts off there. With the default margins every
+  red edge should be (at least partly) visible; to measure the raw video
+  instead, run `aa-hmi serve --margins 0x0`.
 
 All require Pillow (`pip install pillow` / `pip install -e .[dev]` from
 the repo root, or run from wherever your interpreter has Pillow available).

@@ -69,7 +69,7 @@ def render(width: int, height: int) -> bytes:
             draw.text((x, cy + 16), str(x), font=small, fill=grey, anchor="mt")
     # Vertical ruler, left of the centred text.
     rx = 140
-    for y in range(80, height - 80 + 1, 10):
+    for y in range(80, height - 130 + 1, 10):  # stops above the legend
         tall = y % 50 == 0
         draw.line((rx - (12 if tall else 5), y, rx + (12 if tall else 5), y), fill=grey)
         if y % 100 == 0 and abs(y - cy) > 20:

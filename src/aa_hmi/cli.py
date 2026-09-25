@@ -45,6 +45,16 @@ def _parse_size(text: str) -> tuple[int, int]:
     return w, h
 
 
+def _parse_margins(text: str) -> tuple[int, int]:
+    try:
+        w, h = (int(v) for v in text.lower().split("x"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected WIDTHxHEIGHT, e.g. 18x40, got {text!r}") from None
+    if w < 0 or h < 0 or w % 2 or h % 2:
+        raise argparse.ArgumentTypeError(f"{text!r}: margins must be even and not negative")
+    return w, h
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aa-hmi", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -86,6 +96,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="video resolution to send, and the image size client programs draw at "
                              "(default: 800x480, what the Podofo/TF811BT display asks for; `-v` logs "
                              "what your display asks for)")
+    serve.add_argument("--margins", type=_parse_margins, default=(18, 40), metavar="WxH",
+                        help="total width x height of the video edges that may not be visible; client "
+                             "programs draw the area inside them, centred (default: 18x40, what the "
+                             "Podofo display declares; 0x0 = clients draw the full video size)")
     serve.add_argument("--encoder", choices=["persistent", "per-image"], default="persistent",
                         help="'persistent' (default): one long-running ffmpeg, ~10ms per image on a Pi 4; "
                              "'per-image': a fresh ffmpeg for every image, ~330ms (max ~3 images/s), the "
