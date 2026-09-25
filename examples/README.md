@@ -2,7 +2,7 @@
 
 Reference programs showing how to use `aa-hmi`'s local socket protocol
 (`docs/ipc-protocol.md`) via the Python client library
-(`aa_hmi.ipc.client.AaHmiClient`). Both import *only* that library plus
+(`aa_hmi.ipc.client.AaHmiClient`). All import *only* that library plus
 Pillow for rendering -- nothing else from `aa_hmi` -- proving the client
 library is the whole interface a separate program needs.
 
