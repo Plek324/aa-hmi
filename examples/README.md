@@ -19,13 +19,13 @@ library is the whole interface a separate program needs.
    python3 examples/clock.py                 # --interval SECONDS, default 5
    python3 examples/stress.py --ramp         # large-image test, see below
    python3 examples/calibrate.py             # which part of the image is visible
+   python3 examples/touch_test.py            # draws your touches on the display
    ```
 
 ## What each one shows
 
 - **`hello_world.py`** — the minimal case: connect, render one static
-  frame, send it once, print any touch events (raw bytes only -- touch
-  decode is a placeholder, see `../src/aa_hmi/touch_channel.py`) until
+  frame, send it once, print any touch events (action and x/y) until
   Ctrl+C.
 - **`clock.py`** — a repeating frame at a configurable interval. Also a
   handy soak-test tool: leave it running for hours against real hardware
@@ -46,6 +46,11 @@ library is the whole interface a separate program needs.
   you how many pixels it cuts off there. With the default margins every
   red edge should be (at least partly) visible; to measure the raw video
   instead, run `aa-hmi serve --margins 0x0`.
+
+- **`touch_test.py`** — five targets to touch; a green circle marks each
+  PRESS, yellow dots the DRAG events, a red cross the RELEASE. If the
+  marks land under your finger, touch decoding and coordinate mapping
+  work. Tap CLEAR to wipe the marks.
 
 All require Pillow (`pip install pillow` / `pip install -e .[dev]` from
 the repo root, or run from wherever your interpreter has Pillow available).

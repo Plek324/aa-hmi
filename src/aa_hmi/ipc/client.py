@@ -13,8 +13,8 @@ Usage:
     with AaHmiClient() as client:
         client.send_frame(some_rgb24_bytes)          # must match client.frame_width/frame_height
         touch = client.poll_touch(timeout=0.0)        # non-blocking; None if nothing waiting
-        if touch:
-            print(touch.raw.hex())
+        if touch and touch.is_structured:
+            print(touch.action.name, touch.x, touch.y)   # PRESS/DRAG/RELEASE, in frame coordinates
 """
 from __future__ import annotations
 
@@ -72,8 +72,11 @@ class AaHmiClient:
     def poll_touch(self, timeout: float = 0.0) -> TouchEvent | None:
         """Returns the next available TouchEvent, or None if nothing
         arrives within `timeout` seconds (0.0 = don't block at all).
-        Touch fields are placeholder-only right now -- see TouchEvent's
-        own docstring in touch_channel.py; only `.raw` is populated."""
+        A decoded event has .action (PRESS, then a stream of DRAG while
+        the finger stays down, then RELEASE) and .x/.y in this client's
+        frame coordinates -- a touch on the display's edge, outside the
+        frame, can be negative or >= the frame size. .raw always holds
+        the display's original message."""
         self._assert_connected()
         try:
             result = wire.read_ipc_message(self._sock, timeout=timeout if timeout > 0 else 0.001)

@@ -66,8 +66,8 @@ def main() -> int:
                 deadline = time.monotonic() + args.interval
                 while time.monotonic() < deadline:
                     touch = client.poll_touch(timeout=max(0.0, deadline - time.monotonic()))
-                    if touch:
-                        print(f"touch: raw={touch.raw.hex()}")
+                    if touch and touch.is_structured:
+                        print(f"touch: {touch.action.name} at ({touch.x}, {touch.y})")
                     else:
                         break
         except KeyboardInterrupt:

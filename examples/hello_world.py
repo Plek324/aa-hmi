@@ -50,10 +50,10 @@ def main() -> int:
         try:
             while True:
                 touch = client.poll_touch(timeout=1.0)
-                if touch:
-                    # Structured x/y/action fields are a placeholder for now
-                    # -- see touch_channel.py -- only .raw is populated today.
-                    print(f"touch: raw={touch.raw.hex()}")
+                if touch and touch.is_structured:
+                    print(f"touch: {touch.action.name} at ({touch.x}, {touch.y})")
+                elif touch:
+                    print(f"touch (not decoded): raw={touch.raw.hex()}")
         except KeyboardInterrupt:
             print("\nbye")
     return 0

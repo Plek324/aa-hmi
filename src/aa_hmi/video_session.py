@@ -205,8 +205,7 @@ class VideoSession:
         """Opens channel 1 and registers a callback invoked (from the
         background reader thread -- keep it fast/non-blocking) with the
         raw decrypted payload of every INPUT_EVENT_INDICATION frame. See
-        touch_channel.py for turning that into a (still placeholder)
-        TouchEvent."""
+        touch_channel.py for decoding that into a TouchEvent."""
         self._assert_open()
         self._on_touch_raw = on_touch_raw
         # Best-guess empty open frame -- INPUT has no setup-request-

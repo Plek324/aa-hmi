@@ -31,9 +31,9 @@ python3 examples/clock.py        # a separate program, talking only to the socke
   dashboards and maps, not smooth video. `--encoder per-image` falls back
   to one `ffmpeg` run per image (~330ms, max ~3 images/s), proven
   overnight.
-- **Touch**: the channel opens and raw event bytes reach your program,
-  but x/y decoding is a placeholder, not done yet. Touching the display
-  also brings up the display's own popup menu (see
+- **Touch**: your program gets PRESS / DRAG / RELEASE events with x/y
+  in its own image's coordinates (decoded per aasdk's layout). Touching
+  the display also brings up the display's own popup menu (see
   [Known hardware quirks](#known-hardware-quirks)).
 
 ## What this is
@@ -387,10 +387,9 @@ Issues and PRs welcome — especially:
 - A D-Bus discovery backend — see
   [`docs/discovery-backends.md`](docs/discovery-backends.md) for the seam
   it should slot into.
-- **Completing the touch ground-truth capture** (real x/y/pointer_id/action
-  field numbers) — see [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s
-  follow-up task. This is the single highest-value thing to work on if
-  you want touch to actually be usable.
+- **Getting rid of the display's own popup menu on touch** — see
+  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s touch
+  section.
 - Working through [`docs/video-live-verification.md`](docs/video-live-verification.md)'s
   staged checklist on your own hardware and reporting results either way.
 

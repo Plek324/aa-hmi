@@ -179,3 +179,17 @@ def test_persistent_encoder_failure_falls_back_to_per_image(monkeypatch):
     holder.on_frame(_frame())
     assert calls == ["per-image"]
     assert len(holder.session.sent) == 1
+
+
+# --- touch: decoded and mapped to client coordinates ---
+
+def test_client_touch_maps_display_coordinates_to_the_client_image():
+    from aa_hmi.protocol import encode_varint_field
+    location = encode_varint_field(1, 409) + encode_varint_field(2, 240) + encode_varint_field(3, 0)
+    touch = bytes([0x0A, len(location)]) + location + encode_varint_field(3, 0)
+    raw = encode_varint_field(1, 1) + bytes([0x1A, len(touch)]) + touch
+
+    holder = daemon._SessionHolder(encoder_mode="per-image", pad=(800, 480, 9, 20))
+    holder.video_size = (800, 480)
+    event = holder.client_touch(raw)
+    assert (event.x, event.y, event.action.name) == (400, 220, "PRESS")

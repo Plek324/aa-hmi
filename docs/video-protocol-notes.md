@@ -151,55 +151,44 @@ thinner on the right and bottom. Touch
 coordinates, once decoded, will be in the 800x480 touchscreen space:
 subtract (9, 20) to get client coordinates.
 
-## Touch: proven vs. not proven — a correction
+## Touch
 
-An earlier doc (`aa_pi2display`'s `real-protocol-findings.md`) claims
-touch decode is *"fully working... decodes exactly per the aasdk
-proto."* **That claim is inaccurate about field-level decode
-specifically.** What's actually proven: channel 1
-(`INPUT_EVENT_INDICATION`, msg id `0x8001`) opens the same way every
-other channel does (best-guess empty open frame, `flags=0x0F` — content
-doesn't seem to matter, same as channel 3's open), and real touch
-gestures genuinely arrive as raw decrypted bytes with an observable
-pattern in the trailing byte: `...1800` for PRESS, `...1802` for DRAG,
-`...1801` for RELEASE. What was **never actually implemented or tested**
-anywhere in that project: the real protobuf field numbers for
-`touch_location.x`, `touch_location.y`, `pointer_id`, `action_index` —
-only raw hex was ever logged. The real field layout exists only in an
-`aasdk` proto checkout on the Pi (`~/aa-project/aasdk`), not in any file
-available to this project.
+Channel 1 (`INPUT_EVENT_INDICATION`, msg id `0x8001`) opens the same way
+the video channel does, and the display sends one message per touch
+event. The field layout comes from aasdk's protos (checked out on the Pi
+at `~/aa-project/aasdk/aasdk_proto/`):
 
-`aa-hmi`'s `touch_channel.py` reflects this honestly: it relays raw bytes
-today (`TouchEvent.raw`), with `x`/`y`/`pointer_id`/`action` declared but
-always `None`, guarded by a `TOUCH_GROUND_TRUTH_CONFIRMED = False` flag —
-same pattern as `messages.GROUND_TRUTH_CONFIRMED` on the Bluetooth side.
+```
+InputEventIndication { uint64 timestamp = 1; int32 disp_channel = 2; TouchEvent touch_event = 3; ... }
+TouchEvent           { repeated TouchLocation touch_location = 1; uint32 action_index = 2; TouchAction touch_action = 3; }
+TouchLocation        { uint32 x = 1; uint32 y = 2; uint32 pointer_id = 3; }
+TouchAction          { PRESS = 0; RELEASE = 1; DRAG = 2; }
+```
 
-### Follow-up task: capturing the real field layout
+This explains the pattern seen in raw captures before the layout was
+known: messages ending in `18 00` / `18 02` / `18 01` are touch_action
+PRESS / DRAG / RELEASE. While a finger stays down, the display streams
+DRAG events until RELEASE.
 
-1. On the Pi, `~/aa-project/aasdk` should have the real proto
-   definitions — find `InputEvent`/`TouchEvent`'s field numbers there.
-2. Alternatively (or to cross-check), capture+decrypt a real drag gesture
-   the same way `protocol-notes.md` decoded a real `WifiInfoResponse` —
-   `aa-hmi serve -v` plus a TLS keylog would give you the raw bytes; walk
-   the tag/wire-type/length bytes by hand.
-3. Fill in `touch_channel.parse_touch_event()`, flip
-   `TOUCH_GROUND_TRUTH_CONFIRMED` to `True`, update
-   `tests/test_touch_channel.py` (it currently asserts the placeholder
-   behavior deliberately — that assertion needs to change alongside the
-   fix, not be silently left stale).
-4. Bump `ipc/protocol.py`'s `TOUCH` message `schema` byte and start
-   setting `has_structured=1` — old clients keep working unmodified since
-   they only ever read `.raw`.
+`touch_channel.parse_touch_event()` decodes this (the location at
+`action_index`, for multi-touch), and `map_to_client()` converts from the
+display's touchscreen space (800x480, from its ServiceDiscoveryResponse)
+to the client image's: scale to the video size, then subtract the
+client image's offset in the video (9, 20). A touch on the display's
+edge, outside the client image, gives coordinates outside it (possibly
+negative); they're passed on as-is. Anything that doesn't decode is
+still relayed, raw-only. `serve -v` logs every PRESS and RELEASE with
+client coordinates and raw bytes. `examples/touch_test.py` draws touches
+on the display itself, to check the mapping by eye.
 
-### Known UX risk, not solved, no known fix
+### Known UX issue: the display's own popup menu
 
 Touching the screen brings up the **display's own native popup menu** —
-never seen with a real phone connected. This suggests the display runs
-its own overlay UI, independent of and possibly covering whatever's
-streamed to it. No suppression method is known. If this can't be worked
-around, it may limit how usable a genuinely interactive touch UI can be
-on this specific hardware — worth confirming/investigating before relying
-on touch for anything beyond simple confirmation taps.
+never seen with a real phone connected. Not investigated yet. One
+suspect: our channel-open messages are a best guess (an empty message,
+`flags=0x0F`) rather than a real ChannelOpenRequest, and a phone also
+sends input key bindings; the display may treat touches as its own
+while it doesn't consider the input channel properly claimed.
 
 ## The display's video decoder can wedge silently under sustained live use — RESOLVED 2026-09-24
 

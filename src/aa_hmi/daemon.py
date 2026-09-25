@@ -36,7 +36,7 @@ from .ipc import protocol as ipc_wire
 from .ipc.server import IpcServer
 from .log import log
 from .retry import RetryCancelledError
-from .touch_channel import parse_touch_event
+from .touch_channel import TouchAction, TouchEvent, map_to_client, parse_touch_event
 from .video_session import VideoSession
 
 # What the Podofo/TF811BT display asks for in its ServiceDiscoveryResponse
@@ -124,6 +124,26 @@ class _SessionHolder:
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
             log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
 
+    def client_touch(self, raw: bytes) -> TouchEvent:
+        """Decode a raw touch message and convert its coordinates to the
+        client image's (see touch_channel.map_to_client)."""
+        event = parse_touch_event(raw)
+        if not event.is_structured or self.video_size is None:
+            return event
+        info = self.session.display_info if self.session is not None else None
+        touch_size = ((info.touch_width, info.touch_height)
+                      if info is not None and info.touch_width and info.touch_height else self.video_size)
+        offset = (self.pad[2], self.pad[3]) if self.pad else (0, 0)
+        return map_to_client(event, touch_size=touch_size, video_size=self.video_size, offset=offset)
+
+    def on_touch_raw(self, raw: bytes, ipc_server: IpcServer, verbose: bool) -> None:
+        event = self.client_touch(raw)
+        if verbose and (not event.is_structured or event.action != TouchAction.DRAG):
+            # PRESS/RELEASE only: DRAG streams dozens per second while a finger is down.
+            what = f"{event.action.name} at ({event.x}, {event.y})" if event.is_structured else "undecoded"
+            log(f"<- touch {what}, raw {raw.hex()}")
+        ipc_server.broadcast_touch(event)
+
     def _encode(self, frame_msg: ipc_wire.FrameMsg) -> list[list[bytes]]:
         if self.encoder_mode == "persistent":
             try:
@@ -197,7 +217,7 @@ def _bootstrap_and_open_session(args, bt: BluetoothCtl, cache_path: Path,
                                video_size=holder.video_size, margins=holder.margins)
         session.connect_and_handshake(timeout=10.0)
         session.open_video_channel()
-        session.open_touch_channel(lambda raw: ipc_server.broadcast_touch(parse_touch_event(raw)))
+        session.open_touch_channel(lambda raw: holder.on_touch_raw(raw, ipc_server, args.verbose))
     except Exception:
         if rfcomm_sock is not None:
             rfcomm_sock.close()

@@ -1,46 +1,36 @@
-"""touch_channel.py -- touch input, PLACEHOLDER decode.
+"""touch_channel.py -- decode touch events from the display.
 
-What's actually proven: channel 1 (INPUT_EVENT_INDICATION, msg_id 0x8001)
-opens the same way every other channel does, and real touch gestures DO
-arrive as raw decrypted bytes with an observable pattern -- a trailing
-byte of `...1800` for PRESS, `...1802` for DRAG, `...1801` for RELEASE,
-confirmed against real touch-and-drag gestures via the aa_pi2display
-sibling project's capture+decrypt pipeline.
+Touch arrives on channel 1 as INPUT_EVENT_INDICATION (msg id 0x8001).
+Field layout from aasdk's protos (aasdk_proto/InputEventIndicationMessage,
+TouchEventData, TouchLocationData, TouchActionEnum):
 
-What's NOT proven, despite an earlier doc (aa_pi2display's
-real-protocol-findings.md) claiming otherwise: the actual protobuf field
-numbers for touch_location.x, touch_location.y, pointer_id, and
-action_index were never implemented or tested anywhere -- only raw hex
-was ever logged. The real field layout exists only in an `aasdk` proto
-checkout on the Pi (~/aa-project/aasdk), not in any file available to
-this project. That earlier doc's "decodes exactly per the aasdk proto...
-fully working" claim is INACCURATE about field-level decode specifically
--- channel-open and raw-bytes-arriving is what's actually confirmed.
+    InputEventIndication { timestamp = 1; disp_channel = 2; touch_event = 3; ... }
+    TouchEvent           { repeated touch_location = 1; action_index = 2; touch_action = 3 }
+    TouchLocation        { x = 1; y = 2; pointer_id = 3 }
+    TouchAction          { PRESS = 0; RELEASE = 1; DRAG = 2 }
 
-So: this module relays raw bytes now. TouchAction's PRESS/DRAG/RELEASE
-values are pre-declared from the *observed byte pattern* above, even
-though the field *numbers* that carry them aren't confirmed -- mirroring
-messages.py's existing separation of "observed values" from "confirmed
-wire encoding" (see SecurityMode there). Real (x, y) decode is a
-follow-up task: capture a real drag gesture, decode it byte-for-byte the
-way protocol-notes.md decoded WifiInfoResponse, fill in
-parse_touch_event(), flip TOUCH_GROUND_TRUTH_CONFIRMED to True -- same
-pattern as messages.GROUND_TRUTH_CONFIRMED. See
-docs/video-protocol-notes.md.
+This matches what was seen in raw captures before the layout was known:
+messages ending in `18 00` / `18 02` / `18 01` = touch_action PRESS /
+DRAG / RELEASE. While a finger is down, the display streams DRAG events.
+
+Coordinates arrive in the display's touchscreen space (800x480 on the
+Podofo, from its ServiceDiscoveryResponse). map_to_client() converts
+them to the client program's image, which sits inside the video's
+margins (see display_info.py and docs/video-protocol-notes.md).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 
-TOUCH_GROUND_TRUTH_CONFIRMED = False
+from .protocol import decode_fields, get_varint
+
+_IEI_TOUCH_EVENT = 3
+_TE_LOCATION, _TE_ACTION_INDEX, _TE_ACTION = 1, 2, 3
+_TL_X, _TL_Y, _TL_POINTER = 1, 2, 3
 
 
 class TouchAction(IntEnum):
-    """Values as OBSERVED in the trailing byte of real captured gestures
-    -- NOT confirmed as the real protobuf enum wire values, since the
-    field layout itself isn't known yet. Do not treat these as
-    authoritative until TOUCH_GROUND_TRUTH_CONFIRMED is True."""
     PRESS = 0
     RELEASE = 1
     DRAG = 2
@@ -50,25 +40,54 @@ class TouchAction(IntEnum):
 class TouchEvent:
     raw: bytes
     schema: int = 1  # matches ipc/protocol.py's TOUCH message schema byte
-    x: int | None = None          # TODO(touch-ground-truth): field number unknown
-    y: int | None = None          # TODO(touch-ground-truth): field number unknown
-    pointer_id: int | None = None  # TODO(touch-ground-truth): field number unknown
-    action: TouchAction | None = None  # TODO(touch-ground-truth): field number unknown
+    x: int | None = None
+    y: int | None = None
+    pointer_id: int | None = None
+    action: TouchAction | None = None
 
     @property
     def is_structured(self) -> bool:
-        return self.action is not None
+        return self.action is not None and self.x is not None and self.y is not None
 
 
 def parse_touch_event(raw: bytes) -> TouchEvent:
-    """Placeholder: always returns a raw-only TouchEvent. Intentionally
-    does not attempt to guess field numbers -- see module docstring.
-    Guarded by TOUCH_GROUND_TRUTH_CONFIRMED so it's obvious in code (and
-    in tests/test_touch_channel.py, which asserts on this) the day
-    someone captures the real layout and this needs to change."""
-    assert not TOUCH_GROUND_TRUTH_CONFIRMED, (
-        "TOUCH_GROUND_TRUTH_CONFIRMED is True but parse_touch_event() was never "
-        "updated to actually decode x/y/pointer_id/action -- fix this function, "
-        "then this assertion becomes dead code and can be removed."
-    )
-    return TouchEvent(raw=raw)
+    """Decode one INPUT_EVENT_INDICATION body (after the msg id). Anything
+    that isn't a recognisable touch (button events, unknown actions,
+    garbage) comes back raw-only; never raises."""
+    event = TouchEvent(raw=raw)
+    try:
+        top = decode_fields(raw)
+        touch = next((f.value for f in top.get(_IEI_TOUCH_EVENT, []) if f.wire_type == 2), None)
+        if touch is None:
+            return event
+        fields = decode_fields(bytes(touch))
+        locations = [decode_fields(bytes(f.value)) for f in fields.get(_TE_LOCATION, []) if f.wire_type == 2]
+        if not locations:
+            return event
+        # A missing touch_action is the protobuf default, PRESS.
+        action_value = get_varint(fields, _TE_ACTION) or 0
+        if action_value not in TouchAction._value2member_map_:
+            return event
+        index = get_varint(fields, _TE_ACTION_INDEX) or 0
+        location = locations[index] if index < len(locations) else locations[0]
+        x, y = get_varint(location, _TL_X), get_varint(location, _TL_Y)
+        if x is None or y is None:
+            return event
+        return replace(event, x=x, y=y, pointer_id=get_varint(location, _TL_POINTER) or 0,
+                       action=TouchAction(action_value))
+    except Exception:  # noqa: BLE001 -- a malformed event must never break touch relaying
+        return event
+
+
+def map_to_client(event: TouchEvent, *, touch_size: tuple[int, int], video_size: tuple[int, int],
+                  offset: tuple[int, int]) -> TouchEvent:
+    """Touchscreen coordinates -> client image coordinates: scale from the
+    touchscreen's size to the video's (the same on the Podofo), then
+    subtract where the client image sits in the video. A touch in the
+    margin area can give coordinates outside the client image (negative,
+    or >= its size); they're passed on as-is, the IPC format is signed."""
+    if not event.is_structured:
+        return event
+    x = event.x * video_size[0] // touch_size[0] - offset[0]
+    y = event.y * video_size[1] // touch_size[1] - offset[1]
+    return replace(event, x=max(-32768, min(32767, x)), y=max(-32768, min(32767, y)))

@@ -2,6 +2,14 @@
 
 ## Unreleased (since 0.2.0)
 
+- **Touch is decoded**: PRESS / DRAG / RELEASE with x/y, per aasdk's
+  field layout (found in the aasdk checkout on the Pi). Coordinates are
+  converted to the client image's (touchscreen 800x480 -> client
+  782x440 at offset 9, 20). Client programs get `touch.action`,
+  `touch.x`, `touch.y`; `.raw` is still there. `serve -v` logs every
+  PRESS and RELEASE. New `examples/touch_test.py` draws touches on the
+  display; `hello_world.py` and `clock.py` print decoded touches.
+
 - **Video is now 800x480, what the display asks for** (was 854x480,
   inherited from aa_pi2display; the display cut off the extra width).
 - **Client programs now draw exactly the visible area: 782x440.** The
