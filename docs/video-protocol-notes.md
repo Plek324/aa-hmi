@@ -181,14 +181,20 @@ still relayed, raw-only. `serve -v` logs every PRESS and RELEASE with
 client coordinates and raw bytes. `examples/touch_test.py` draws touches
 on the display itself, to check the mapping by eye.
 
-### Known UX issue: the display's own popup menu
+**Verified on the display** (2026-09-25) with `touch_test.py`: marks
+land under the finger over the whole screen, corners included; a drag
+gives PRESS, a trail of DRAG events, then RELEASE.
 
-Touching the screen brings up the **display's own native popup menu** —
-never seen with a real phone connected. Not investigated yet. One
-suspect: our channel-open messages are a best guess (an empty message,
-`flags=0x0F`) rather than a real ChannelOpenRequest, and a phone also
-sends input key bindings; the display may treat touches as its own
-while it doesn't consider the input channel properly claimed.
+### The display's own popup: volume and brightness
+
+Any touch also brings up the display's own small popup in the bottom
+right corner, with a volume slider and a **brightness slider**. It
+disappears by itself after a while and can be dragged elsewhere. Touches
+on the popup go to the display, not to us. We keep it: on-screen
+brightness control is useful (volume does nothing useful here, the
+display has no audio from us). Programs should leave the bottom right
+corner free of important controls, or expect the popup to cover them
+briefly after a touch.
 
 ## The display's video decoder can wedge silently under sustained live use — RESOLVED 2026-09-24
 

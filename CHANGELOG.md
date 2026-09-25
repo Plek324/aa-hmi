@@ -9,6 +9,9 @@
   `touch.x`, `touch.y`; `.raw` is still there. `serve -v` logs every
   PRESS and RELEASE. New `examples/touch_test.py` draws touches on the
   display; `hello_world.py` and `clock.py` print decoded touches.
+  **Verified on the display**: accurate over the whole screen. The
+  display's own volume/brightness popup (bottom right, on any touch) is
+  kept and documented.
 
 - **Video is now 800x480, what the display asks for** (was 854x480,
   inherited from aa_pi2display; the display cut off the extra width).

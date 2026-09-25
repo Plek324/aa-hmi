@@ -32,8 +32,9 @@ python3 examples/clock.py        # a separate program, talking only to the socke
   to one `ffmpeg` run per image (~330ms, max ~3 images/s), proven
   overnight.
 - **Touch**: your program gets PRESS / DRAG / RELEASE events with x/y
-  in its own image's coordinates (decoded per aasdk's layout). Touching
-  the display also brings up the display's own popup menu (see
+  in its own image's coordinates, verified accurate over the whole
+  screen. Any touch also shows the display's own volume/brightness popup
+  in the bottom right corner (see
   [Known hardware quirks](#known-hardware-quirks)).
 
 ## What this is
@@ -343,13 +344,12 @@ but these are worth knowing about:
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
   (usually `~/.config/aa-hmi/devices.json`). It's a local convenience
   cache, not a secrets vault.
-- **Touching the display brings up its own native popup menu**, never
-  seen with a real phone connected — it may cover whatever you're
-  streaming. No known way to suppress it yet. See
+- **Any touch shows the display's own popup** in the bottom right
+  corner: a volume slider and a brightness slider (handy). It hides
+  itself after a timeout and can be dragged elsewhere; touches on it go
+  to the display, not to your program. Keep important controls out of
+  the bottom right corner. See
   [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
-
-## Troubleshooting
-
 - **`nmcli` connect fails with "property is missing"**: a stale
   NetworkManager connection profile for that SSID is probably missing
   required security settings. `aa-hmi` already deletes any existing
@@ -387,9 +387,6 @@ Issues and PRs welcome — especially:
 - A D-Bus discovery backend — see
   [`docs/discovery-backends.md`](docs/discovery-backends.md) for the seam
   it should slot into.
-- **Getting rid of the display's own popup menu on touch** — see
-  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s touch
-  section.
 - Working through [`docs/video-live-verification.md`](docs/video-live-verification.md)'s
   staged checklist on your own hardware and reporting results either way.
 
