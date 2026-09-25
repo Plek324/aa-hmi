@@ -134,6 +134,7 @@ class _RecordingSession:
 
     def send_frame(self, nal_bytes, ts):
         self.sent.append(ts)
+        return 1
 
 
 def _two_messages(monkeypatch):

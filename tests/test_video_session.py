@@ -160,3 +160,94 @@ def test_touch_still_goes_to_callback():
     s._on_touch_raw = got.append
     s._handle_incoming(m.CHANNEL_INPUT, m.INPUT_EVENT_INDICATION, b"\x18\x00")
     assert got == [b"\x18\x00"]
+
+
+# --- large messages: FIRST / MIDDLE / LAST over real TLS ---
+#
+# Sends a >16KB media message through a real TLS session (our server side
+# against an in-memory client standing in for the display), then
+# reassembles it the way aasdk's receiver does: read the frame header,
+# the u32 total size on a FIRST frame, decrypt each frame's payload, and
+# append until LAST. Hardware is the final judge; this proves our side is
+# self-consistent.
+
+import shutil  # noqa: E402
+import ssl  # noqa: E402
+import struct  # noqa: E402
+
+from aa_hmi import cert  # noqa: E402
+from aa_hmi import video_messages as m  # noqa: E402
+
+
+class _CapturingSocket:
+    def __init__(self):
+        self.data = b""
+
+    def sendall(self, b):
+        self.data += b
+
+
+def _tls_pair(tmp_path):
+    cert_file, key_file = tmp_path / "c.pem", tmp_path / "k.pem"
+    cert.ensure_cert(cert_file, key_file)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(cert_file, key_file)
+    client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client_ctx.check_hostname = False
+    client_ctx.verify_mode = ssl.CERT_NONE
+    s_in, s_out, c_in, c_out = ssl.MemoryBIO(), ssl.MemoryBIO(), ssl.MemoryBIO(), ssl.MemoryBIO()
+    server = server_ctx.wrap_bio(s_in, s_out, server_side=True)
+    client = client_ctx.wrap_bio(c_in, c_out)
+    for _ in range(10):  # shuttle handshake bytes until both sides are done
+        done = 0
+        for obj in (client, server):
+            try:
+                obj.do_handshake()
+                done += 1
+            except ssl.SSLWantReadError:
+                pass
+        s_in.write(c_out.read())
+        c_in.write(s_out.read())
+        if done == 2:
+            break
+    return server, s_in, s_out, client, c_in
+
+
+def _reassemble(wire_bytes, client, c_in):
+    """aasdk-style receive: returns [(channel, plaintext message)]."""
+    messages, current, i = [], b"", 0
+    while i < len(wire_bytes):
+        channel, flags, length = struct.unpack(">BBH", wire_bytes[i:i + 4])
+        i += 4
+        frame_type = flags & 0x03
+        if frame_type == 1:  # FIRST carries the total plaintext size
+            total = struct.unpack(">I", wire_bytes[i:i + 4])[0]
+            i += 4
+        c_in.write(wire_bytes[i:i + length])
+        i += length
+        current += client.read(65536)
+        if frame_type in (2, 3):  # LAST or BULK completes a message
+            if frame_type == 2:
+                assert len(current) == total
+            messages.append((channel, current))
+            current = b""
+    return messages
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl not installed")
+@pytest.mark.parametrize("size", [100, 16374, 16375, 40000, 200000])
+def test_large_media_message_reassembles_exactly(tmp_path, size):
+    server, s_in, s_out, client, c_in = _tls_pair(tmp_path)
+    session = VideoSession("192.168.10.1", "c.pem", "k.pem")
+    session.state = VideoSessionState.OPEN
+    session._tls_obj, session._incoming, session._outgoing = server, s_in, s_out
+    session._sock = _CapturingSocket()
+
+    nal_bytes = bytes(range(256)) * (size // 256) + b"\x00" * (size % 256)
+    pieces = session.send_frame(nal_bytes, 123456)
+
+    plaintext_len = 2 + 8 + size
+    assert pieces == -(-plaintext_len // 16384)  # ceil
+    [(channel, message)] = _reassemble(session._sock.data, client, c_in)
+    assert channel == m.CHANNEL_VIDEO
+    assert message == struct.pack(">HQ", m.AV_MEDIA_WITH_TIMESTAMP_INDICATION, 123456) + nal_bytes

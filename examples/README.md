@@ -17,6 +17,7 @@ library is the whole interface a separate program needs.
    ```bash
    python3 examples/hello_world.py
    python3 examples/clock.py                 # --interval SECONDS, default 5
+   python3 examples/stress.py --ramp         # large-image test, see below
    ```
 
 ## What each one shows
@@ -29,5 +30,14 @@ library is the whole interface a separate program needs.
   handy soak-test tool: leave it running for hours against real hardware
   (`aa-hmi serve` logs every reconnect it does on its own side).
 
-Both require Pillow (`pip install pillow` / `pip install -e .[dev]` from
+- **`stress.py`** — deliberately hard-to-compress images (part random
+  noise), to test images over 16KB, which go to the display in several
+  pieces. `--noise PERCENT` for a fixed level, `--ramp` to step through
+  0-100%. Measured on a Pi 4: 0% is ~10KB (1 piece), 2% ~21KB (2),
+  10% ~58KB (4), 40% ~187KB (12), 100% ~445KB (28). Each image shows its
+  number and noise level, and a bar moves along the bottom, so a stuck or
+  corrupted image is easy to spot. Run `aa-hmi serve -v` to see the
+  sizes and piece counts in its log.
+
+All require Pillow (`pip install pillow` / `pip install -e .[dev]` from
 the repo root, or run from wherever your interpreter has Pillow available).

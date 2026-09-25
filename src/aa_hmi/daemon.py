@@ -102,8 +102,9 @@ class _SessionHolder:
             for au in access_units:
                 nal_bytes = encoder.assemble_nal_bytes(au)
                 self.frame_counter += 1
-                session.send_frame(nal_bytes, ts)
-                sizes.append(str(len(nal_bytes)))
+                wire_frames = session.send_frame(nal_bytes, ts)
+                sizes.append(f"{len(nal_bytes)}" if wire_frames == 1 else
+                             f"{len(nal_bytes)} in {wire_frames} pieces")
             log(f"  sent image #{self.image_counter} as {len(access_units)} message(s) "
                 f"({', '.join(sizes)} bytes), encoded in {encode_ms:.0f}ms, ts={ts}us",
                 verbose_only=True, verbose=True)

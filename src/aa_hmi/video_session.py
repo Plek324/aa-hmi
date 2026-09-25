@@ -168,7 +168,8 @@ class VideoSession:
 
     # --- sending (thread-safe, usable from any thread once OPEN) ---
 
-    def _send_encrypted_locked(self, channel: int, flags: int, msg_id: int, body: bytes) -> None:
+    def _send_encrypted_locked(self, channel: int, flags: int, msg_id: int, body: bytes) -> int:
+        """Returns how many wire frames the message took (1 unless > 16KB)."""
         plaintext = struct.pack(">H", msg_id) + body
         chunks = wire.split_plaintext(plaintext)
         if len(chunks) > 1:
@@ -181,6 +182,7 @@ class VideoSession:
                 ciphertext = self._outgoing.read()
                 self._sock.sendall(wire.make_fragment_frame(
                     channel, wire.fragment_flags(flags, index, len(chunks)), ciphertext, len(plaintext)))
+        return len(chunks)
 
     def open_video_channel(self) -> None:
         self._assert_open()
@@ -209,15 +211,18 @@ class VideoSession:
         self._send_encrypted_locked(m.CHANNEL_INPUT, m.FLAGS_CHANNEL_OPEN, 0x0000, b"")
         log("touch (input) channel opened")
 
-    def send_frame(self, nal_bytes: bytes, timestamp: int) -> None:
+    def send_frame(self, nal_bytes: bytes, timestamp: int) -> int:
         """timestamp is a small, stream-relative counter (microseconds
         since this session's own start), NOT wall-clock time -- the
-        display has no RTC and can't make sense of absolute epoch time."""
+        display has no RTC and can't make sense of absolute epoch time.
+        Returns how many wire frames the message took."""
         self._assert_open()
         body = struct.pack(">Q", timestamp) + nal_bytes
-        self._send_encrypted_locked(m.CHANNEL_VIDEO, m.FLAGS_NORMAL, m.AV_MEDIA_WITH_TIMESTAMP_INDICATION, body)
+        frames = self._send_encrypted_locked(m.CHANNEL_VIDEO, m.FLAGS_NORMAL,
+                                             m.AV_MEDIA_WITH_TIMESTAMP_INDICATION, body)
         self.frames_sent += 1
         self._last_send = time.monotonic()
+        return frames
 
     def ack_stats(self) -> dict:
         """Snapshot of media flow: how many media messages we've sent, how

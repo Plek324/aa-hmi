@@ -2,6 +2,12 @@
 
 ## Unreleased (since 0.2.0)
 
+- **`examples/stress.py`**: sends hard-to-compress images (10KB to
+  ~445KB, 1 to 28 pieces) to test images over 16KB on the display. With
+  `-v`, `serve` now logs "in N pieces" for images that needed more than
+  one. New test: large messages sent over real TLS and reassembled the
+  way the display's receiver does.
+
 - **Faster encoding: ~10ms per image instead of ~330ms** on a Pi 4. The
   daemon now keeps one ffmpeg running (`encoder.PersistentEncoder`)
   instead of starting one per image, which lifts the ~3 images/s cap.
