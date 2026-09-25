@@ -196,7 +196,7 @@ and never sent a setup response with a limit), repeated SPS/PPS (still
 sent with every image, not a problem once each image is one message),
 and `idr_pic_id` always being 0 (fixing it made things worse). The
 experiment flags used for these A/B tests were removed afterwards; they
-are in git history (commit `ba441ef`) if ever needed again.
+are in git history (commit `94bce9c`) if ever needed again.
 
 ### Safety net: protocol-level liveness detection
 
