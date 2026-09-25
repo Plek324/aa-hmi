@@ -100,6 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="total width x height of the video edges that may not be visible; client "
                              "programs draw the area inside them, centred (default: 18x40, what the "
                              "Podofo display declares; 0x0 = clients draw the full video size)")
+    serve.add_argument("--keepalive", type=float, default=10.0, metavar="SECONDS",
+                        help="resend the last image after this many seconds without a new one, so a "
+                             "program that only sends on changes doesn't trip --liveness-timeout; also "
+                             "re-shows the last image right after a reconnect (default: 10; 0 disables)")
     serve.add_argument("--encoder", choices=["persistent", "per-image"], default="persistent",
                         help="'persistent' (default): one long-running ffmpeg, ~10ms per image on a Pi 4; "
                              "'per-image': a fresh ffmpeg for every image, ~330ms (max ~3 images/s), the "

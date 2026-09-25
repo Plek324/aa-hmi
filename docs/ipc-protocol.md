@@ -96,12 +96,11 @@ a future server version can accept other geometries/formats without
 breaking the wire format for everyone else.
 
 There's no acknowledgement for a `FRAME` beyond an `ERROR` on rejection —
-if you don't get an `ERROR`, assume it was accepted. Send frames as
-infrequently as your content actually changes; there is no minimum or
-maximum rate enforced by the protocol itself (the target use case is
-roughly 1 frame per 1–10 seconds, never continuous video — see
-[`video-protocol-notes.md`](video-protocol-notes.md) for why that matters
-to how the server encodes frames).
+if you don't get an `ERROR`, assume it was accepted. Send frames only
+when your content changes: the server resends the last one itself to
+keep the display session alive (`aa-hmi serve --keepalive`). There is no
+minimum rate; in practice 10+ frames/s works on a Pi 4 (see
+[`video-protocol-notes.md`](video-protocol-notes.md)).
 
 ## `TOUCH` (server → client)
 

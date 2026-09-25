@@ -193,3 +193,67 @@ def test_client_touch_maps_display_coordinates_to_the_client_image():
     holder.video_size = (800, 480)
     event = holder.client_touch(raw)
     assert (event.x, event.y, event.action.name) == (400, 220, "PRESS")
+
+
+# --- keep-alive: resend the last image when a program goes quiet ---
+
+class _KeepaliveSession(_RecordingSession):
+    def __init__(self, seconds_since_send):
+        super().__init__()
+        self.seconds_since_send = seconds_since_send
+
+    def ack_stats(self):
+        return {"seconds_since_send": self.seconds_since_send}
+
+
+def _keepalive_holder(monkeypatch, seconds_since_send, keepalive=10.0):
+    encoded = []
+    monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
+                         lambda data, w, h, **kw: encoded.append(data) or [[b"\x65"]])
+    holder = daemon._SessionHolder(encoder_mode="per-image")
+    holder.session = _KeepaliveSession(seconds_since_send)
+    holder.keepalive = keepalive
+    holder.client_size = (4, 2)
+    return holder, encoded
+
+
+def test_keepalive_resends_the_last_image_after_the_interval(monkeypatch):
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=11.0)
+    holder.last_frame = SimpleNamespace(pixel_data=b"last image", width=4, height=2)
+    holder.keepalive_tick()
+    assert encoded == [b"last image"]
+
+
+def test_keepalive_does_nothing_while_images_keep_coming(monkeypatch):
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=3.0)
+    holder.last_frame = SimpleNamespace(pixel_data=b"last image", width=4, height=2)
+    holder.keepalive_tick()
+    assert encoded == []
+
+
+def test_keepalive_sends_at_once_on_a_fresh_session(monkeypatch):
+    """Nothing sent yet on this session (e.g. right after a reconnect):
+    the display gets the last image back immediately."""
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=None)
+    holder.last_frame = SimpleNamespace(pixel_data=b"last image", width=4, height=2)
+    holder.keepalive_tick()
+    assert encoded == [b"last image"]
+
+
+def test_keepalive_uses_a_placeholder_before_any_program_sent_an_image(monkeypatch):
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=None)
+    holder.keepalive_tick()
+    assert len(encoded) == 1 and len(encoded[0]) == 4 * 2 * 3
+
+
+def test_keepalive_disabled(monkeypatch):
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=None, keepalive=None)
+    holder.keepalive_tick()
+    assert encoded == []
+
+
+def test_frames_arriving_while_disconnected_are_kept_for_later(monkeypatch):
+    holder, encoded = _keepalive_holder(monkeypatch, seconds_since_send=None)
+    holder.session = None
+    holder.on_frame(SimpleNamespace(pixel_data=b"while away", width=4, height=2))
+    assert encoded == [] and holder.last_frame.pixel_data == b"while away"

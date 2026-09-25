@@ -227,6 +227,8 @@ aa-hmi serve [options]      # full daemon: bootstrap + hold display session + se
   --liveness-timeout SECONDS reconnect if the display sends nothing at all for this long, even if the
                               connection otherwise looks fine (default: 60; 0 disables). See
                               docs/video-protocol-notes.md
+  --keepalive SECONDS        resend the last image after this long without a new one, so programs
+                              can send only on changes (default: 10; 0 disables)
   --encoder MODE             persistent (default, ~10ms/image) or per-image (~330ms/image, the
                               proven fallback)
   --video-size WxH           video resolution (default: 800x480, what the Podofo display asks for;

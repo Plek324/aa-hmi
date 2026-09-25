@@ -269,12 +269,17 @@ With `--liveness-timeout 8` in that state, the daemon correctly detected
 "nothing in 9s" and reconnected right on schedule. This means
 `--liveness-timeout` isn't purely "did the display's decoder wedge" — it
 also fires if **the client itself** goes quiet for that long, since the
-display only seems to respond to activity, not tick on its own. For the
-1-frame-per-1–10s target use case this project was designed around, the
-default 60s window comfortably covers normal gaps between frames; a
-client with longer legitimate idle periods than that should either send
-occasional no-op frames to keep the session "busy," or raise
-`--liveness-timeout` accordingly.
+display only seems to respond to activity, not tick on its own.
+
+That bit real programs: `examples/touch_test.py` only sends an image when
+something changes, so after a minute without touches the daemon
+reconnected. **Fixed (2026-09-25) with a keep-alive**: after
+`--keepalive` seconds (default 10) without a send, the daemon resends
+the last image itself — or a plain dark image if no program has sent
+anything yet, so the session also stays up with no program connected.
+The same check runs right after a (re)connect, so the display shows the
+last image again at once instead of waiting for the program's next one.
+Programs can send only when something changes.
 
 ## Confirmed: the Bluetooth link must stay OPEN through the TCP connect, not just have been used
 

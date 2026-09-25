@@ -49,6 +49,7 @@ DEFAULT_VIDEO_SIZE = (800, 480)
 # declared 9px each, so the margins are a safe (slightly conservative)
 # description of the visible area.
 DEFAULT_MARGINS = (18, 40)
+DEFAULT_KEEPALIVE = 10.0  # seconds without a send before the last image is resent
 _FRAME_DROP_LOG_INTERVAL = 5.0  # seconds between "dropping frame, no session" log lines
 
 
@@ -74,6 +75,16 @@ class _SessionHolder:
         self.reconnect_count = 0
         self.last_ssid: str | None = None  # for run_daemon's final-shutdown WiFi cleanup
         self._last_drop_log = 0.0
+        # Keep-alive: the display only answers when we send it something, so
+        # a session with no new images for --liveness-timeout seconds looks
+        # dead and gets reconnected. keepalive_tick() resends the last image
+        # (or a plain dark one if no program has sent anything yet) after
+        # `keepalive` seconds without a send -- and right after a
+        # (re)connect, so the display shows the last image again at once.
+        self.keepalive: float | None = None
+        self.client_size: tuple[int, int] | None = None
+        self.last_frame: ipc_wire.FrameMsg | None = None
+        self._send_lock = threading.Lock()  # IPC thread and keep-alive both encode+send
 
     def close_session(self) -> None:
         """Closes both the video session and the RFCOMM socket held open
@@ -98,6 +109,32 @@ class _SessionHolder:
         return int((time.monotonic() - self.session_start) * 1_000_000)
 
     def on_frame(self, frame_msg: ipc_wire.FrameMsg) -> None:
+        self.last_frame = frame_msg  # kept even while reconnecting, shown again once connected
+        self._send(frame_msg, "image")
+
+    def keepalive_tick(self) -> None:
+        """Called about once a second from the daemon's main loop."""
+        session = self.session
+        if not self.keepalive or session is None or not session.is_alive():
+            return
+        since = session.ack_stats()["seconds_since_send"]
+        if since is not None and since < self.keepalive:
+            return
+        frame = self.last_frame or self._placeholder_frame()
+        if frame is not None:
+            self._send(frame, "keep-alive: resent image" if self.last_frame else "keep-alive: placeholder image")
+
+    def _placeholder_frame(self) -> ipc_wire.FrameMsg | None:
+        if self.client_size is None:
+            return None
+        w, h = self.client_size
+        return ipc_wire.FrameMsg(w, h, ipc_wire.PixelFormat.RGB24, bytes((16, 20, 32)) * (w * h))
+
+    def _send(self, frame_msg: ipc_wire.FrameMsg, what: str) -> None:
+        with self._send_lock:
+            self._send_locked(frame_msg, what)
+
+    def _send_locked(self, frame_msg: ipc_wire.FrameMsg, what: str) -> None:
         session = self.session
         if session is None or not session.is_alive():
             now = time.monotonic()
@@ -118,7 +155,7 @@ class _SessionHolder:
                 wire_frames = session.send_frame(nal_bytes, ts)
                 sizes.append(f"{len(nal_bytes)}" if wire_frames == 1 else
                              f"{len(nal_bytes)} in {wire_frames} pieces")
-            log(f"  sent image #{self.image_counter} as {len(access_units)} message(s) "
+            log(f"  sent {what} #{self.image_counter} as {len(access_units)} message(s) "
                 f"({', '.join(sizes)} bytes), encoded in {encode_ms:.0f}ms, ts={ts}us",
                 verbose_only=True, verbose=True)
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
@@ -270,12 +307,14 @@ def _format_ack_stats(stats: dict) -> str:
 
 def _wait_until_dropped_or_stopped(session: VideoSession, stop_event: threading.Event,
                                     liveness_timeout: float | None, poll_interval: float = 1.0,
-                                    stats_interval: float | None = None) -> None:
+                                    stats_interval: float | None = None, tick=None) -> None:
     """stats_interval (set from -v) prints a media-flow summary that often
     -- added to catch the moment the display stops acking, since a freeze
     otherwise leaves nothing in the log."""
     next_stats = time.monotonic() + stats_interval if stats_interval else None
     while not stop_event.is_set():
+        if tick is not None:
+            tick()
         if next_stats is not None and time.monotonic() >= next_stats:
             log(_format_ack_stats(session.ack_stats()))
             next_stats = time.monotonic() + stats_interval
@@ -315,6 +354,9 @@ def run_daemon(args) -> int:
 
     holder = _SessionHolder(encoder_mode=getattr(args, "encoder", "persistent"), pad=pad)
     holder.video_size, holder.margins = (video_w, video_h), (margin_w, margin_h)
+    holder.client_size = (client_w, client_h)
+    keepalive = getattr(args, "keepalive", DEFAULT_KEEPALIVE)
+    holder.keepalive = keepalive if keepalive and keepalive > 0 else None
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None,
                            frame_width=client_w, frame_height=client_h)
     ipc_server.start(on_frame=holder.on_frame)
@@ -330,7 +372,8 @@ def run_daemon(args) -> int:
                 log(f"=== display session established (connection #{holder.reconnect_count}), serving IPC ===")
                 liveness_timeout = args.liveness_timeout if args.liveness_timeout and args.liveness_timeout > 0 else None
                 _wait_until_dropped_or_stopped(session, stop_event, liveness_timeout,
-                                               stats_interval=10.0 if args.verbose else None)
+                                               stats_interval=10.0 if args.verbose else None,
+                                               tick=holder.keepalive_tick)
             except RetryCancelledError:
                 # stop_event fired while a bootstrap attempt was retrying/backing
                 # off -- see retry.retry_with_backoff's cancel_event docstring.

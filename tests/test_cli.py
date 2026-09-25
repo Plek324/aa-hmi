@@ -226,3 +226,9 @@ def test_serve_margins_default_and_parse():
     for bad in ["9x40", "-2x4", "x"]:
         with pytest.raises(SystemExit):
             parser.parse_args(["serve", "--margins", bad])
+
+
+def test_serve_keepalive_default():
+    parser = build_parser()
+    assert parser.parse_args(["serve"]).keepalive == 10.0
+    assert parser.parse_args(["serve", "--keepalive", "0"]).keepalive == 0.0

@@ -2,6 +2,14 @@
 
 ## Unreleased (since 0.2.0)
 
+- **Keep-alive: programs can send images only when something changes.**
+  The display only answers when it gets something, so a quiet program
+  tripped `--liveness-timeout` after a minute and caused a reconnect
+  (found with `touch_test.py`). The daemon now resends the last image
+  after `--keepalive` seconds without a send (default 10), a plain dark
+  image if no program has sent one yet, and re-shows the last image
+  right after a reconnect.
+
 - **Touch is decoded**: PRESS / DRAG / RELEASE with x/y, per aasdk's
   field layout (found in the aasdk checkout on the Pi). Coordinates are
   converted to the client image's (touchscreen 800x480 -> client
