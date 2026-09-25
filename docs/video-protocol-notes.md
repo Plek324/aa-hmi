@@ -113,6 +113,10 @@ alternates `idr_pic_id` 0/1 between images. If ffmpeg dies or stalls,
 that image falls back to a one-off ffmpeg and the next one gets a fresh
 persistent process. `serve --encoder per-image` switches back entirely.
 
+Verified on the display (2026-09-25): 10 images/s for 3,000 images, no
+problems — so the display is fine with alternating `idr_pic_id` once
+each image is one message.
+
 ## Touch: proven vs. not proven — a correction
 
 An earlier doc (`aa_pi2display`'s `real-protocol-findings.md`) claims

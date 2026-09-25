@@ -8,7 +8,9 @@
   ffmpeg outputs FLV so each image's end is known immediately. If it
   fails, that image falls back to a one-off ffmpeg; `serve --encoder
   per-image` switches back entirely. With `-v`, each image's log line
-  shows its encode time.
+  shows its encode time. Verified on the display: 10 images/s for 3,000
+  images without a problem, so the alternating `idr_pic_id` of a
+  continuous encoder is fine once each image is one message.
 
 - **Fixed: the display freezing under sustained live updates.** Each
   image is now encoded as a single slice (`ffmpeg -threads 1`) and sent
