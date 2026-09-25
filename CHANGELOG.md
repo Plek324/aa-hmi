@@ -8,7 +8,8 @@
   (found with `touch_test.py`). The daemon now resends the last image
   after `--keepalive` seconds without a send (default 10), a plain dark
   image if no program has sent one yet, and re-shows the last image
-  right after a reconnect.
+  right after a reconnect. Verified on the display with `touch_test.py`
+  left untouched: no more reconnects.
 
 - **Touch is decoded**: PRESS / DRAG / RELEASE with x/y, per aasdk's
   field layout (found in the aasdk checkout on the Pi). Coordinates are
