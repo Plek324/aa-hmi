@@ -144,7 +144,10 @@ reliable, slightly conservative description of the visible area, and
 no scaling was visible.
 
 Client programs therefore draw **782x440** (`HELLO_ACK` tells them), and
-ffmpeg pads that onto a black 800x480 frame at (9, 20). Touch
+ffmpeg pads that onto a black 800x480 frame at (9, 20). Checked on the
+display with `calibrate.py` at 782x440: the red frame (the client
+image's outermost 4px) is visible on all four edges, only very slightly
+thinner on the right and bottom. Touch
 coordinates, once decoded, will be in the 800x480 touchscreen space:
 subtract (9, 20) to get client coordinates.
 
