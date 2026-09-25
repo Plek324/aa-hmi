@@ -58,30 +58,6 @@ def _read_exact(sock: socket.socket, n: int, *, allow_empty: bool) -> bytes | No
     return buf
 
 
-def split_tls_records(data: bytes) -> list[bytes]:
-    """Split concatenated TLS records (as drained from an outgoing
-    MemoryBIO after a single write) into a list of individual complete
-    record byte-strings (5-byte header + payload each).
-
-    A single TLS 1.2 record can carry at most 16384 bytes of plaintext
-    (RFC 5246), so any write() larger than that gets silently split into
-    multiple records by the TLS layer -- and the display's decoder does
-    not handle multiple TLS records bundled under one wire frame
-    (confirmed: a >16KB message sent as one wire frame wrapping two TLS
-    records produced a black screen). Send each returned chunk as its own
-    separate wire frame instead. Proven fix, ported verbatim from
-    aa_pi2display's aa_session.py.
-    """
-    records = []
-    i = 0
-    while i + 5 <= len(data):
-        rlen = struct.unpack(">H", data[i + 3:i + 5])[0]
-        total = 5 + rlen
-        records.append(data[i:i + total])
-        i += total
-    return records
-
-
 # --- multi-frame messages ---
 #
 # The flags byte, per aasdk's FrameHeader: bits 0-1 = frame type
@@ -91,12 +67,12 @@ def split_tls_records(data: bytes) -> list[bytes]:
 # 16384-byte payload limit goes out as FIRST, MIDDLE..., LAST; the FIRST
 # frame's header carries an extra u32 with the total plaintext size.
 #
-# Before this, an oversized message was split into TLS records that were
-# each sent as a separate BULK frame -- so the display saw every piece as
-# a complete (garbage) message of its own. That is the likely real reason
-# "sending a whole frame as one big message" gave a black screen in
-# aa_pi2display. Not yet verified on hardware (clock frames stay under
-# 16KB); layout taken from aasdk.
+# Replaces aa_pi2display's split_tls_records, which sent each TLS record
+# of an oversized message as a separate BULK frame -- so the display saw
+# every piece as a complete (garbage) message of its own, the likely real
+# reason "a whole frame as one big message" gave a black screen there.
+# Not yet verified on hardware (clock frames stay under 16KB); layout
+# taken from aasdk.
 
 MAX_FRAME_PAYLOAD = 16384
 FRAME_TYPE_MASK = 0x03

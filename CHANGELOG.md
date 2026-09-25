@@ -6,46 +6,33 @@
   image is now encoded as a single slice (`ffmpeg -threads 1`) and sent
   as one media message, like a real phone does. Before, x264 cut every
   image into 4 slices, each sent as its own message, and the display's
-  decoder wedged after 1–145 images. Verified: `examples/clock.py` ran
-  1h22m at 1Hz (~4,900 images) without a freeze. `serve
-  --no-single-slice` restores the old behavior for A/B testing.
+  decoder wedged after 1–145 images while `aa-hmi` kept reporting
+  successful sends. Verified: `examples/clock.py` ran overnight at 2Hz,
+  11h22m, 80,701 images, on one session without a freeze or reconnect.
+  This also answers the session-persistence question: one Bluetooth
+  trigger holds a session for hours.
 - **Messages over 16KB are now sent as proper multi-frame messages**
   (FIRST/MIDDLE/LAST flags, total size on the first frame, as in aasdk)
   instead of separate TLS records each flagged as a complete message.
   Not yet exercised on hardware: clock images stay under 16KB.
-- **Experimental `serve --idr-alternation`** (off by default): alternates
-  the H.264 `idr_pic_id` between images as the spec asks. Froze *sooner*
-  when tested with 4 slices per image; not retested since.
-- `serve --timestamp-mode {elapsed,per-slice}`: video timestamps now
-  track real elapsed time by default.
+- **Video timestamps** now track real elapsed time since the session
+  opened, with every message of one image sharing a timestamp.
+- **Media-flow diagnostics**: `VideoSession` counts media acks (`0x8004`),
+  records `max_unacked` from an AV setup response (`0x8003`) if the
+  display sends one, and logs every other incoming message instead of
+  dropping it. With `-v`, `serve` prints a media-flow line every 10s and
+  one line per image sent (message count and sizes).
+- **`--liveness-timeout`** (default 60s, `0` disables): reconnect if the
+  display sends nothing at all for that long, even though the connection
+  looks fine. A safety net; it did not catch the freeze above, because
+  the display kept acking throughout.
+- **Removed** `serve --persistent-session` (a placeholder for the now
+  answered persistence question) and the temporary A/B flags used while
+  hunting the freeze (`--timestamp-mode`, `--idr-alternation`,
+  `--single-slice`); they are in git history if ever needed.
+- Removed a stray product image from the repository root.
 
-Several more real bugs found live (2026-09-22), reported by a user
-testing `aa-hmi serve` with `examples/clock.py`:
-
-- **Diagnostics for the decoder freeze**: messages from the display were
-  previously all drained and discarded except touch. `VideoSession` now
-  counts media acks (`0x8004`: session, value), records `max_unacked`
-  from the AV setup response (`0x8003`) if the display sends one, and
-  logs every other incoming message in full instead of dropping it. With
-  `-v`, `serve` prints a media-flow line every 10s (sent / acked /
-  outstanding / time since last ack). The aim is to find out whether the
-  acks stop or change when the display freezes, and whether we're
-  exceeding a flow-control limit we never honored. Diagnostic only; no
-  behavior change yet.
-
-- **The display's own video decoder can wedge silently under sustained
-  live use** (reported: frozen screen after 1-5Hz updates for several
-  minutes; `aa-hmi` kept logging successful sends throughout, completely
-  unaware anything was wrong -- only restarting `aa-hmi serve` itself
-  fixed it, not the client). Root cause unconfirmed (leading hypothesis:
-  repeated H.264 parameter-set reinitialization from the per-frame
-  `ffmpeg` encoding approach -- see `docs/video-protocol-notes.md`).
-  Mitigated with protocol-level liveness detection:
-  `VideoSession.is_alive(liveness_timeout=...)` now also fails if the
-  display hasn't sent anything at all (not just video-unrelated traffic
-  like ACKs) within that window, even though the transport itself looks
-  perfectly healthy. `daemon.py`'s already-proven reconnect logic uses
-  this via the new `--liveness-timeout` flag (default 60s, `0` disables).
+Other fixes found live (2026-09-22):
 
 - **`Ctrl+C` left the Pi connected to the display's WiFi**, breaking the
   *next* `aa-hmi serve` start (the documented WiFi/Bluetooth

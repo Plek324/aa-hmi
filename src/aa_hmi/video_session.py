@@ -262,12 +262,11 @@ class VideoSession:
         Without this check, `is_alive()` (and thus the daemon's reconnect
         watchdog) had no way to ever notice -- "aa-hmi keeps printing
         sent frame messages, totally unaware something is off," reported
-        verbatim. Root cause on the display's side is NOT confirmed (see
-        docs/video-protocol-notes.md for the leading hypothesis); this is
-        a symptom-level mitigation that lets the daemon's already-proven
-        full-reconnect logic recover automatically instead of the display
-        staying frozen indefinitely until someone notices and manually
-        restarts `aa-hmi serve`. Omitted by default (None) so existing
+        verbatim. That freeze turned out to be caused by sending one image
+        as several messages (fixed, see docs/video-protocol-notes.md) --
+        and the display kept acking throughout it, so this check would not
+        have caught that one. Kept as a safety net for a display that goes
+        completely silent. Omitted by default (None) so existing
         callers that just want "is the transport still up" are unaffected."""
         if self.state != VideoSessionState.OPEN:
             return False

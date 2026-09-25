@@ -77,34 +77,11 @@ def test_encode_frame_to_access_units_convenience_wrapper():
     assert len(aus) >= 1
 
 
-# --- keep_last_picture: idr_pic_id alternation (display-freeze fix) ---
-# NAL header 0x67 = SPS, 0x68 = PPS, 0x06 = SEI, 0x65 = IDR slice. The
-# byte after a slice's header has its top bit set iff first_mb_in_slice==0
-# (start of a new picture).
-
-def test_keep_last_picture_keeps_params_and_only_the_second_picture():
-    nals = [
-        b"\x67sps", b"\x68pps", b"\x06sei",
-        b"\x65\x88pic1-a", b"\x65\x40pic1-b",
-        b"\x65\x88pic2-a", b"\x65\x40pic2-b",
-    ]
-    assert encoder.keep_last_picture(nals) == [b"\x67sps", b"\x68pps", b"\x65\x88pic2-a", b"\x65\x40pic2-b"]
-
-
-def test_keep_last_picture_single_picture_is_unchanged_apart_from_ordering():
-    nals = [b"\x67sps", b"\x68pps", b"\x65\x88a", b"\x65\x40b"]
-    assert encoder.keep_last_picture(nals) == nals
-
-
-def test_keep_last_picture_no_slices_returns_input():
-    nals = [b"\x67sps", b"\x68pps"]
-    assert encoder.keep_last_picture(nals) == nals
-
-
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
-def test_parity_1_returns_exactly_one_picture():
-    width, height = 16, 16
-    rgb24 = bytes([10, 20, 30] * (width * height))
-    aus = encoder.encode_frame_to_access_units(rgb24, width, height, timeout=10.0, idr_pic_id_parity=1)
+def test_encode_frame_to_access_units_gives_one_slice_per_image():
+    """The display freeze fix: one slice = one media message per image."""
+    width, height = 320, 240  # big enough that sliced threads would split it
+    rgb24 = bytes(range(256)) * (width * height * 3 // 256)
+    aus = encoder.encode_frame_to_access_units(rgb24, width, height, timeout=10.0)
     slices = [n for au in aus for n in au if (n[0] & 0x1F) in (1, 5)]
-    assert sum(1 for n in slices if n[1] & 0x80) == 1
+    assert len(slices) == 1

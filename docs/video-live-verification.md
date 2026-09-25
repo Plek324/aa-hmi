@@ -73,13 +73,14 @@ that stopping/restarting `clock.py` (Ctrl+C, rerun) doesn't require
 restarting `aa-hmi serve` — the IPC server should just accept the new
 connection.
 
-## 6. Soak test (the session-persistence question)
+## 6. Soak test
 
-Leave `examples/clock.py` running for 2+ hours (longer is better) against
-`aa-hmi serve -v`. Watch for `session attempt failed` / `reconnecting
-in Ns...` log lines. Record: did it reconnect at all, and if so, roughly
-how often / after what. Update `video-protocol-notes.md`'s "Open
-question" section with the actual result either way.
+Leave `examples/clock.py` running for hours against `aa-hmi serve -v`
+(inside `tmux` or as a systemd service, so it doesn't depend on your SSH
+client staying awake). Watch for a frozen display, or `session attempt
+failed` / `reconnecting in Ns...` log lines. Reference result
+(2026-09-25): 11h22m at 2 images/s, 80,701 images, no freeze, no
+reconnect.
 
 ## 7. Clean shutdown
 

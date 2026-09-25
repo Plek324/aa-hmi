@@ -66,31 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--display-ip", default="192.168.10.1", help="display's IP on its own WiFi AP (default: 192.168.10.1)")
     serve.add_argument("--cert", metavar="PATH", help="TLS cert path (default: auto-generated under --config-dir)")
     serve.add_argument("--key", metavar="PATH", help="TLS key path (default: auto-generated under --config-dir)")
-    serve.add_argument("--persistent-session", action="store_true",
-                        help="EXPERIMENTAL, unverified (see docs/video-protocol-notes.md): assume the TCP/TLS "
-                             "session survives indefinitely without re-arming Bluetooth; still re-arms on any "
-                             "actual drop, but logs/counts drops for soak-test analysis instead of treating "
-                             "re-arming as simply routine")
     serve.add_argument("--reconnect-max-attempts", type=int, default=None,
                         help="give up after this many consecutive reconnect failures (default: retry forever)")
     serve.add_argument("--liveness-timeout", type=float, default=60.0, metavar="SECONDS",
                         help="reconnect if the display sends nothing at all (not even an ACK) for this long, "
-                             "even though the connection otherwise looks fine -- the display's own video decoder "
-                             "has been observed to wedge silently under sustained use (see "
-                             "docs/video-protocol-notes.md); 0 disables this check (default: 60)")
-    serve.add_argument("--timestamp-mode", choices=["elapsed", "per-slice"], default="elapsed",
-                        help="video timestamps: 'elapsed' = real microseconds since the session opened, "
-                             "same value for every slice of one image (default); 'per-slice' = the old "
-                             "+33333us per slice, which drifts behind real time -- kept for A/B testing "
-                             "the display freeze")
-    serve.add_argument("--idr-alternation", action=argparse.BooleanOptionalAction, default=False,
-                        help="experimental: alternate the H.264 idr_pic_id 0/1 between consecutive "
-                             "images, as the spec requires (default off -- froze sooner in the one "
-                             "live test so far)")
-    serve.add_argument("--single-slice", action=argparse.BooleanOptionalAction, default=True,
-                        help="encode each image as one slice, sent as one media message like a real "
-                             "phone does (default on); --no-single-slice restores the old 4 slices / "
-                             "4 messages per image, for A/B testing the display freeze")
+                             "even though the connection otherwise looks fine -- a safety net for a silently "
+                             "wedged display (see docs/video-protocol-notes.md); 0 disables this check (default: 60)")
     serve.add_argument("-v", "--verbose", action="store_true")
 
     lst = sub.add_parser("list", help="show cached devices")

@@ -107,10 +107,9 @@ HINT_VIDEO_SESSION_FLAKY = (
     "something else grabbed its single Bluetooth connection slot (see "
     "HINT_SINGLE_CONNECTION_SLOT above -- the daemon re-triggers the full "
     "Bluetooth bootstrap on every reconnect, which needs the same single "
-    "BT connection slot as the initial one). If this keeps recurring, "
-    "check docs/video-protocol-notes.md's session-persistence notes -- "
-    "whether one Bluetooth trigger can hold a session open indefinitely "
-    "is still an open question, being tracked via --persistent-session."
+    "BT connection slot as the initial one). A healthy session has run "
+    "11h+ without a single drop, so repeated drops point at the radio "
+    "link or the display, not at normal behavior."
 )
 
 # errno values seen in practice against flaky classic-BT head units

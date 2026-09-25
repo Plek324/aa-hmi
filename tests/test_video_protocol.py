@@ -44,39 +44,6 @@ def test_read_wire_frame_raises_on_partial_body():
         wire.read_wire_frame(sock)
 
 
-def test_split_tls_records_single_record():
-    record = b"\x17\x03\x03" + struct.pack(">H", 5) + b"hello"
-    assert wire.split_tls_records(record) == [record]
-
-
-def test_split_tls_records_two_records_concatenated():
-    """The one proven bug fix in this file: a >16KB write can produce
-    ciphertext spanning multiple real TLS records, and the display can't
-    handle them bundled under one wire frame -- confirmed to cause a
-    black screen. This must always split cleanly."""
-    r1 = b"\x17\x03\x03" + struct.pack(">H", 4) + b"AAAA"
-    r2 = b"\x17\x03\x03" + struct.pack(">H", 6) + b"BBBBBB"
-    combined = r1 + r2
-    records = wire.split_tls_records(combined)
-    assert records == [r1, r2]
-    assert len(records) == 2  # not 1 -- this is the exact regression this fix guards against
-
-
-def test_split_tls_records_handles_a_realistic_max_size_record():
-    # RFC 5246: max 16384 bytes of plaintext per TLS record.
-    payload = b"x" * 16384
-    r1 = b"\x17\x03\x03" + struct.pack(">H", len(payload)) + payload
-    r2 = b"\x17\x03\x03" + struct.pack(">H", 3) + b"abc"
-    records = wire.split_tls_records(r1 + r2)
-    assert len(records) == 2
-    assert records[0] == r1
-    assert records[1] == r2
-
-
-def test_split_tls_records_empty_input():
-    assert wire.split_tls_records(b"") == []
-
-
 # --- multi-frame messages (FIRST / MIDDLE / LAST) ---
 
 def test_split_plaintext_small_message_is_one_chunk():

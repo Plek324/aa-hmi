@@ -25,12 +25,9 @@ library is the whole interface a separate program needs.
   frame, send it once, print any touch events (raw bytes only -- touch
   decode is a placeholder, see `../src/aa_hmi/touch_channel.py`) until
   Ctrl+C.
-- **`clock.py`** — a repeating frame at a configurable interval. This is
-  also a soak-test tool: leave it running for hours against real hardware
-  to help answer the open question in `../docs/video-protocol-notes.md`
-  about whether a video session survives long-term without periodic
-  Bluetooth re-arming (`aa-hmi serve` logs every reconnect it does on its
-  own side).
+- **`clock.py`** — a repeating frame at a configurable interval. Also a
+  handy soak-test tool: leave it running for hours against real hardware
+  (`aa-hmi serve` logs every reconnect it does on its own side).
 
 Both require Pillow (`pip install pillow` / `pip install -e .[dev]` from
 the repo root, or run from wherever your interpreter has Pillow available).

@@ -17,31 +17,21 @@ python3 examples/clock.py        # a separate program, talking only to the socke
 
 ## Status
 
-**Bluetooth + WiFi bootstrap: confirmed working end-to-end** against a
-real TF811BT motorcycle display (2026-09-18) — see
-[Tested with](#tested-with) and
-[`docs/protocol-notes.md`](docs/protocol-notes.md#the-full-confirmed-sequence).
+**Working end-to-end** against a real Podofo / TF811BT motorcycle display
+(see [Tested with](#tested-with)):
 
-**Daemon mode (`aa-hmi serve`): confirmed working end-to-end, visually** —
-against the same real display (2026-09-18): full bootstrap → TCP/TLS
-handshake → video + touch channels opened → `examples/hello_world.py`
-connected over the local IPC socket and sent a real frame — and
-"Hello, aa-hmi!" was actually seen rendered on the physical panel. One
-real integration bug was found and fixed along the way: the RFCOMM/Bluetooth
-link must stay open through the TCP connect, not just have been used (see
-[`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)). Touch
-input is a confirmed-working channel-open with raw bytes relayed — real
-x/y decode is an explicit placeholder, not yet done (see below). **Not yet
-run**: the multi-hour soak test for the session-persistence question, and
-full multi-cycle reconnect testing (see
-[`docs/video-live-verification.md`](docs/video-live-verification.md) for
-what's left).
-
-**Sustained live use**: earlier versions froze the display after a few
-minutes of live updates. Fixed (each image is now sent as one message,
-like a phone does); `examples/clock.py` has since run 1h22m at 1Hz
-(~4,900 images) without a freeze — see
-[Known hardware quirks](#known-hardware-quirks).
+- **Bluetooth + WiFi bootstrap** (`aa-hmi run`): confirmed working.
+- **Daemon mode** (`aa-hmi serve`): bootstrap → TCP/TLS session → video
+  and touch channels → your program pushes frames over the local IPC
+  socket. **Stable for long runs**: `examples/clock.py` ran overnight at
+  2 images/s — 11h22m, 80,701 images — on one session, without a freeze
+  or a reconnect.
+- **Frame rate**: up to ~3 images/s on a Pi 4 (each image is encoded by
+  its own `ffmpeg` run, ~330ms). Fine for dashboards; not for video.
+- **Touch**: the channel opens and raw event bytes reach your program,
+  but x/y decoding is a placeholder, not done yet. Touching the display
+  also brings up the display's own popup menu (see
+  [Known hardware quirks](#known-hardware-quirks)).
 
 ## What this is
 
@@ -194,10 +184,7 @@ never touches anything else in `aa-hmi`.
 
 On any drop of the video session (display power-cycled, moved out of
 range, etc), `serve` automatically re-runs the full bootstrap and
-reconnects — see
-[`docs/video-protocol-notes.md`](docs/video-protocol-notes.md) for why
-that's the safe default given one still-open question about this
-hardware. For unattended/boot-time operation, see
+reconnects. For unattended/boot-time operation, see
 [`deploy/systemd/aa-hmi.service`](deploy/systemd/aa-hmi.service) — **read
 its comment about the polkit/nmcli permission issue first**, or the
 service will fail at the WiFi-connect step every time.
@@ -232,7 +219,6 @@ aa-hmi serve [options]      # full daemon: bootstrap + hold display session + se
   --socket-path PATH         IPC socket location (default: $XDG_RUNTIME_DIR/aa-hmi/video.sock)
   --display-ip IP            display's IP on its own WiFi AP (default: 192.168.10.1)
   --cert PATH, --key PATH    TLS cert/key paths (default: auto-generated under --config-dir)
-  --persistent-session        EXPERIMENTAL: see docs/video-protocol-notes.md
   --reconnect-max-attempts N  give up after N consecutive reconnect failures (default: retry forever)
   --liveness-timeout SECONDS reconnect if the display sends nothing at all for this long, even if the
                               connection otherwise looks fine (default: 60; 0 disables). See
@@ -341,8 +327,8 @@ but these are worth knowing about:
   while `aa-hmi` kept sending without errors. Cause: the encoder cut each
   image into 4 slices, each sent as its own message; a phone sends one
   whole picture per message. Now one slice = one message per image, and
-  a 1h22m test at 1Hz ran without a freeze. `--liveness-timeout` (default
-  60s) remains as a safety net. Details in
+  an overnight test (80,701 images) ran without a freeze.
+  `--liveness-timeout` (default 60s) remains as a safety net. Details in
   [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 - **The credential cache stores your WiFi password in plaintext** (with
   `0600` file permissions) at `$XDG_CONFIG_HOME/aa-hmi/devices.json`
@@ -351,12 +337,6 @@ but these are worth knowing about:
 - **Touching the display brings up its own native popup menu**, never
   seen with a real phone connected — it may cover whatever you're
   streaming. No known way to suppress it yet. See
-  [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
-- **Whether a video session survives long-term without periodic
-  Bluetooth re-arming is genuinely unverified** — `serve` always
-  fully reconnects on any drop regardless, so this doesn't break
-  anything, it just might reconnect more than strictly necessary. See
-  the soak-test task in
   [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md).
 
 ## Troubleshooting
@@ -392,8 +372,6 @@ but these are worth knowing about:
 ## Contributing
 
 Issues and PRs welcome — especially:
-- Completing the `WifiInfoRequest` ground-truth capture (see
-  [Status](#status)) against your own hardware.
 - Reports of how these quirks (or new ones) show up on different head
   units — the "known hardware quirks" section above is based on exactly
   one device so far.
@@ -404,9 +382,8 @@ Issues and PRs welcome — especially:
   field numbers) — see [`docs/video-protocol-notes.md`](docs/video-protocol-notes.md)'s
   follow-up task. This is the single highest-value thing to work on if
   you want touch to actually be usable.
-- **Running the daemon-mode soak test** — leave `examples/clock.py`
-  running for hours against real hardware and report what you find about
-  the session-persistence question (same doc).
+- **Faster encoding** — a persistent encoder instead of one `ffmpeg` run
+  per image, to get past ~3 images/s.
 - Working through [`docs/video-live-verification.md`](docs/video-live-verification.md)'s
   staged checklist on your own hardware and reporting results either way.
 

@@ -112,7 +112,7 @@ def test_serve_subcommand_parses_bootstrap_and_daemon_flags():
         "--radio-coexistence-workaround", "--wifi-iface", "wlan0", "--bt-timeout", "60",
         "--socket-path", "/tmp/x.sock", "--display-ip", "192.168.10.1",
         "--cert", "/tmp/c.pem", "--key", "/tmp/k.pem",
-        "--persistent-session", "--reconnect-max-attempts", "10", "--liveness-timeout", "45", "-v",
+        "--reconnect-max-attempts", "10", "--liveness-timeout", "45", "-v",
     ])
     assert args.command == "serve"
     assert args.device == "AA:BB:CC:DD:EE:FF"
@@ -125,7 +125,6 @@ def test_serve_subcommand_parses_bootstrap_and_daemon_flags():
     assert args.display_ip == "192.168.10.1"
     assert args.cert == "/tmp/c.pem"
     assert args.key == "/tmp/k.pem"
-    assert args.persistent_session is True
     assert args.reconnect_max_attempts == 10
     assert args.liveness_timeout == 45.0
     assert args.verbose is True
@@ -197,21 +196,3 @@ def test_cmd_serve_shows_polkit_hint_on_nmcli_not_authorized(monkeypatch, capsys
     assert rc == 1
     captured = capsys.readouterr()
     assert HINT_NMCLI_NOT_AUTHORIZED in captured.err
-
-
-def test_serve_timestamp_mode_defaults_to_elapsed_and_accepts_per_slice():
-    parser = build_parser()
-    assert parser.parse_args(["serve"]).timestamp_mode == "elapsed"
-    assert parser.parse_args(["serve", "--timestamp-mode", "per-slice"]).timestamp_mode == "per-slice"
-
-
-def test_serve_idr_alternation_defaults_off_and_can_be_enabled():
-    parser = build_parser()
-    assert parser.parse_args(["serve"]).idr_alternation is False
-    assert parser.parse_args(["serve", "--idr-alternation"]).idr_alternation is True
-
-
-def test_serve_single_slice_defaults_on_and_can_be_disabled():
-    parser = build_parser()
-    assert parser.parse_args(["serve"]).single_slice is True
-    assert parser.parse_args(["serve", "--no-single-slice"]).single_slice is False

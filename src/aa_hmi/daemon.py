@@ -10,11 +10,8 @@ program.
 Reconnect policy: on ANY drop of the video session (TLS error, TCP EOF,
 reader thread died), tear it down cleanly and re-run the ENTIRE bootstrap
 sequence from device resolution -- full Bluetooth re-trigger, full WiFi
-re-bootstrap. This is the safe default given docs/video-protocol-notes.md's
-still-open question of whether one Bluetooth trigger can hold a TCP
-session open indefinitely or whether periodic re-arming turns out to be
-needed: always re-arming is correct either way, just potentially wasteful
-if a lighter-weight reconnect would have worked. The IPC server itself is
+re-bootstrap. Simple and always correct; in practice drops are rare (one
+session ran 11h+ overnight without one). The IPC server itself is
 NOT torn down on a video-session drop -- a connected client keeps its
 socket; frames sent during the reconnect window are just dropped (with a
 rate-limited log) rather than erroring the client's connection.
@@ -42,7 +39,6 @@ from .retry import RetryCancelledError
 from .touch_channel import parse_touch_event
 from .video_session import VideoSession
 
-DEFAULT_ASSUME_PERSISTENT_SESSION = False
 _FRAME_DROP_LOG_INTERVAL = 5.0  # seconds between "dropping frame, no session" log lines
 
 
@@ -52,23 +48,12 @@ class _SessionHolder:
     VideoSession is current, across reconnects, without re-registering a
     new callback each time."""
 
-    def __init__(self, timestamp_mode: str = "elapsed", idr_alternation: bool = False,
-                 single_slice: bool = True):
+    def __init__(self):
         self.session: VideoSession | None = None
         self.rfcomm_sock = None  # held open alongside `session` -- see _bootstrap_and_open_session
-        self.frame_counter = 0   # access units (slices) sent this session
+        self.frame_counter = 0   # media messages sent this session
         self.image_counter = 0   # client images sent this session
         self.session_start = 0.0  # time.monotonic() when the current session opened
-        # "elapsed": every slice of one image gets the same timestamp =
-        # real microseconds since the session opened. "per-slice": the
-        # original behavior, +33333us per slice regardless of real time --
-        # kept for A/B testing a freeze (see docs/video-protocol-notes.md).
-        self.timestamp_mode = timestamp_mode
-        # Alternate idr_pic_id 0/1 between consecutive images, as the H.264
-        # spec requires (see encoder.encode_frame_to_access_units).
-        self.idr_alternation = idr_alternation
-        # One slice (= one media message) per image, like a real phone.
-        self.single_slice = single_slice
         self.reconnect_count = 0
         self.last_ssid: str | None = None  # for run_daemon's final-shutdown WiFi cleanup
         self._last_drop_log = 0.0
@@ -90,11 +75,9 @@ class _SessionHolder:
             self.rfcomm_sock = None
 
     def image_timestamp(self) -> int:
-        """Microseconds since the current session opened -- still
-        stream-relative (the display has no RTC; epoch time is what broke
-        things originally), but tracking real elapsed time instead of a
-        fixed +33333us per slice, which drifted ~0.87s behind real time
-        per second at 1 image/s with 4 slices per image."""
+        """Video timestamp: microseconds since the current session
+        opened. Stream-relative, not wall-clock -- the display has no RTC,
+        and epoch time is what broke things originally."""
         return int((time.monotonic() - self.session_start) * 1_000_000)
 
     def on_frame(self, frame_msg: ipc_wire.FrameMsg) -> None:
@@ -106,22 +89,17 @@ class _SessionHolder:
                 self._last_drop_log = now
             return
         try:
-            parity = self.image_counter % 2 if self.idr_alternation else 0
-            access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height,
-                                                                idr_pic_id_parity=parity,
-                                                                single_slice=self.single_slice)
+            access_units = encoder.encode_frame_to_access_units(frame_msg.pixel_data, frame_msg.width, frame_msg.height)
             self.image_counter += 1
-            image_ts = self.image_timestamp()
-            sizes = ", ".join(str(sum(len(n) + 4 for n in au)) for au in access_units)
-            ts = image_ts
+            ts = self.image_timestamp()
+            sizes = []
             for au in access_units:
                 nal_bytes = encoder.assemble_nal_bytes(au)
                 self.frame_counter += 1
-                ts = image_ts if self.timestamp_mode == "elapsed" else self.frame_counter * 33333
                 session.send_frame(nal_bytes, ts)
+                sizes.append(str(len(nal_bytes)))
             log(f"  sent image #{self.image_counter} as {len(access_units)} message(s) "
-                f"({sizes} bytes), idr_pic_id={parity}, ts={ts}us "
-                f"(messages sent this session: {self.frame_counter})",
+                f"({', '.join(sizes)} bytes), ts={ts}us",
                 verbose_only=True, verbose=True)
         except Exception as e:  # noqa: BLE001 -- one bad frame must never kill the daemon
             log(f"failed to encode/send a client frame: {type(e).__name__}: {e}")
@@ -274,9 +252,7 @@ def run_daemon(args) -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    holder = _SessionHolder(timestamp_mode=getattr(args, "timestamp_mode", "elapsed"),
-                            idr_alternation=getattr(args, "idr_alternation", False),
-                            single_slice=getattr(args, "single_slice", True))
+    holder = _SessionHolder()
     ipc_server = IpcServer(Path(args.socket_path) if args.socket_path else None)
     ipc_server.start(on_frame=holder.on_frame)
 
@@ -286,10 +262,6 @@ def run_daemon(args) -> int:
             try:
                 session = _bootstrap_and_open_session(args, bt, cache_path, cert_file, key_file, ipc_server,
                                                        holder, stop_event)
-                if consecutive_failures > 0 and args.persistent_session:
-                    log(f"WARNING: reconnected after {consecutive_failures} failure(s) despite "
-                        f"--persistent-session -- this is a real data point for the soak-test "
-                        f"question in docs/video-protocol-notes.md, please report it")
                 consecutive_failures = 0
                 holder.reconnect_count += 1
                 log(f"=== display session established (connection #{holder.reconnect_count}), serving IPC ===")

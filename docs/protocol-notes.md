@@ -14,7 +14,7 @@ public source (`src/bluetooth.rs`, `src/protos/`), a Rust project that
 implements this same handshake (among other things) — and cross-checked
 against a real capture from a TF811BT motorcycle AA display, decoded by
 hand and documented in `aa_pi2display`'s `extracting-wifi-credentials.md`.
-Not everything is confirmed yet — see "What's still unconfirmed" below.
+Every message below has since been confirmed against real hardware.
 
 ## Transport
 

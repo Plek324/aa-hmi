@@ -56,9 +56,9 @@ own capture); `flags=0x0B` is normal per-channel traffic thereafter.
    `0x000F`). `video_session.py`'s `close()` runs this in every code path,
    including on a session that never fully opened.
 
-## The two proven wire-level bugs, both ported forward
+## Wire-level details that matter
 
-- **Messages over 16KB** (superseded 2026-09-24): a single TLS record
+- **Messages over 16KB**: a single TLS record
   carries at most 16384 bytes of plaintext, so bigger messages used to be
   split into TLS records, each sent as its own wire frame flagged `0x0B`
   ("BULK" = a complete message). The display therefore saw every piece
@@ -76,14 +76,12 @@ own capture); `flags=0x0B` is normal per-channel traffic thereafter.
   like a real phone sends. Before that, x264's sliced threads cut each
   image into 4 slices, each sent as its own message; the display (which
   most likely treats each message as one picture) froze after a variable
-  number of images (1–145 seen). `serve --no-single-slice` restores the
-  old behavior for A/B testing.
+  number of images (1–145 seen). See the freeze section below.
 - **idr_pic_id**: every image is a separate one-frame encode, so every
   image is an IDR picture with `idr_pic_id = 0`; the spec wants
-  consecutive IDRs to differ. `serve --idr-alternation` fixes that
-  (odd images are encoded twice and only the second copy is sent), but in
-  the one live test so far it froze *sooner* (after 1 and ~11 images), so
-  it's off by default.
+  consecutive IDRs to differ. Fixing that (encode odd images twice, send
+  the second copy) was tried and froze *sooner*, so it was dropped; with
+  one message per image the display doesn't mind.
 
 ## Why per-frame ffmpeg invocation, not a persistent pipe
 
@@ -191,16 +189,16 @@ Test history, `examples/clock.py` on a real Podofo display:
 | 4 slices/image, `+33333us` per slice timestamps | ~32 images |
 | 4 slices/image, same "elapsed" timestamp for all slices of an image | ~130, ~145 images |
 | 4 slices/image + `idr_pic_id` alternation | 1, ~11 images |
-| **1 slice/image (current default)** | **never** — ~4,900 images over 1h22m at 1Hz, stopped only because the PC with the SSH terminals went to sleep |
+| **1 slice/image (current)** | **never** — 1h22m at 1Hz (~4,900 images); then overnight, 11h22m at 2Hz (80,701 images) |
 
 Ruled out along the way: flow control (the display acks every message
 and never sent a setup response with a limit), repeated SPS/PPS (still
 sent with every image, not a problem once each image is one message),
-and `idr_pic_id` always being 0 (fixing it made things worse; kept as
-the experimental `serve --idr-alternation`). `serve --no-single-slice`
-restores the old behavior if this ever needs re-testing.
+and `idr_pic_id` always being 0 (fixing it made things worse). The
+experiment flags used for these A/B tests were removed afterwards; they
+are in git history (commit `ba441ef`) if ever needed again.
 
-### Mitigation implemented now: protocol-level liveness detection
+### Safety net: protocol-level liveness detection
 
 Rather than guess at the root cause, `VideoSession` now tracks when it
 last received *anything at all* from the display (an ACK, a status
@@ -272,37 +270,24 @@ open *at* TCP-connect time, not proven how much longer beyond that is
 actually required) and closes it alongside the video session on any
 reconnect or shutdown.
 
-## Open question: does one Bluetooth trigger hold a session open indefinitely?
+## Session persistence: one Bluetooth trigger holds a session for hours
 
-Separately from the above (which is now resolved): what's still **not**
-confirmed either way is whether an *already-established* video session
-can be held indefinitely with the Bluetooth link eventually closed, or
-whether something requires periodic re-arming even on a live session.
-Every test in `aa_pi2display`'s history ran a bounded-duration session
-(stream one clip, or `--duration N`, then exit) — nothing has ever tested
-multi-hour persistence, and `daemon.py` currently just holds the RFCOMM
-link open for as long as the video session lives rather than testing
-whether it could be closed sooner.
+Every test in `aa_pi2display`'s history ran a bounded-duration session,
+so it was unknown whether a video session could live for hours or would
+need periodic Bluetooth re-arming. Answered by soak tests with
+`examples/clock.py`:
 
-`daemon.py` handles this the safe way regardless of the real answer: any
-drop of the video session (TLS error, TCP EOF, a dead reader thread)
-triggers a **full** reconnect — device resolution, Bluetooth re-trigger,
-WiFi re-bootstrap, fresh TLS handshake — from scratch, every time. This
-is always correct, just potentially wasteful if a lighter-weight
-reconnect would have worked.
+- **2026-09-24**: 1h22m at 1Hz (~4,900 images), one session. Ended only
+  because the PC holding the SSH sessions went to sleep.
+- **2026-09-25**: overnight, 11h22m at 2Hz (80,701 images), one session,
+  no freeze, no reconnect.
 
-### Soak-test results
-
-**2026-09-24**: `examples/clock.py` at 1Hz ran 1h22m (18:24 → 19:46,
-~4,900 images) on one session without freezing. It ended only because
-the PC holding the SSH sessions for `aa-hmi serve` and `clock.py` went to
-sleep, not because of the display or the daemon. That run held the
-RFCOMM link open the whole time (as `daemon.py` always does), so one
-Bluetooth trigger held a live session for over an hour. Still untested:
-multi-hour runs, and whether the RFCOMM link could be closed once the
-session is up. For unattended runs, use the systemd unit in
-`deploy/systemd/` (or `tmux`) so the session doesn't depend on an SSH
-client staying awake.
+`daemon.py` holds the RFCOMM link open for the whole session. Still
+untested: whether it could be closed once the TCP session is up. On any
+drop, `daemon.py` still does a **full** reconnect (Bluetooth, WiFi, TLS)
+— simple and always correct, and rare in practice. For unattended runs
+use the systemd unit in `deploy/systemd/` (or `tmux`), so the session
+doesn't depend on an SSH client staying awake.
 
 ## Troubleshooting: a stale kernel-level Bluetooth connection that `bluetoothctl` can't see
 

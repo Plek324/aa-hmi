@@ -122,10 +122,8 @@ def test_wait_with_liveness_timeout_none_behaves_like_transport_only_check():
 
 # --- video timestamps ---
 #
-# Experiment for the display freeze: the original scheme gave every slice
-# its own +33333us timestamp regardless of real time, so the 4 slices of
-# one image looked like 4 moments and the stream drifted ~0.87s behind
-# real time per second at 1 image/s. "elapsed" mode fixes both.
+# Every message of one image gets the same timestamp: real microseconds
+# since the session opened.
 
 class _RecordingSession:
     def __init__(self):
@@ -138,60 +136,30 @@ class _RecordingSession:
         self.sent.append(ts)
 
 
-def _four_slices(monkeypatch):
+def _two_messages(monkeypatch):
     monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h, **kw: [[b"\x65"], [b"\x41"], [b"\x41"], [b"\x41"]])
+                         lambda data, w, h: [[b"\x67", b"\x65"], [b"\x41"]])
 
 
 def _frame():
     return SimpleNamespace(pixel_data=b"", width=854, height=480)
 
 
-def test_elapsed_mode_gives_all_slices_of_one_image_the_same_timestamp(monkeypatch):
-    _four_slices(monkeypatch)
-    holder = daemon._SessionHolder(timestamp_mode="elapsed")
+def test_all_messages_of_one_image_share_a_timestamp(monkeypatch):
+    _two_messages(monkeypatch)
+    holder = daemon._SessionHolder()
     holder.session = _RecordingSession()
     holder.session_start = daemon.time.monotonic()
     holder.on_frame(_frame())
     assert len(set(holder.session.sent)) == 1
     assert holder.image_counter == 1
-    assert holder.frame_counter == 4
+    assert holder.frame_counter == 2
 
 
-def test_elapsed_mode_tracks_real_time(monkeypatch):
-    _four_slices(monkeypatch)
-    holder = daemon._SessionHolder(timestamp_mode="elapsed")
+def test_timestamp_tracks_real_time(monkeypatch):
+    _two_messages(monkeypatch)
+    holder = daemon._SessionHolder()
     holder.session = _RecordingSession()
     holder.session_start = daemon.time.monotonic() - 10.0  # session opened 10s ago
     holder.on_frame(_frame())
     assert 9_900_000 < holder.session.sent[0] < 11_000_000
-
-
-def test_per_slice_mode_keeps_old_behavior(monkeypatch):
-    _four_slices(monkeypatch)
-    holder = daemon._SessionHolder(timestamp_mode="per-slice")
-    holder.session = _RecordingSession()
-    holder.on_frame(_frame())
-    assert holder.session.sent == [33333, 66666, 99999, 133332]
-
-
-def test_idr_alternation_passes_parity_0_1_0_per_image(monkeypatch):
-    parities = []
-    monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h, idr_pic_id_parity=0, **kw: parities.append(idr_pic_id_parity) or [[b"e"]])
-    holder = daemon._SessionHolder(idr_alternation=True)
-    holder.session = _RecordingSession()
-    for _ in range(3):
-        holder.on_frame(_frame())
-    assert parities == [0, 1, 0]
-
-
-def test_no_idr_alternation_always_passes_parity_0(monkeypatch):
-    parities = []
-    monkeypatch.setattr(daemon.encoder, "encode_frame_to_access_units",
-                         lambda data, w, h, idr_pic_id_parity=0, **kw: parities.append(idr_pic_id_parity) or [[b"e"]])
-    holder = daemon._SessionHolder(idr_alternation=False)
-    holder.session = _RecordingSession()
-    for _ in range(3):
-        holder.on_frame(_frame())
-    assert parities == [0, 0, 0]
